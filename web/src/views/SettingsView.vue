@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Check, Eye, EyeOff, Image as ImageIcon, KeyRound, LogOut, RefreshCw, Save, ServerCog, Trash2, Upload } from 'lucide-vue-next'
+import { Bot, Check, Eye, EyeOff, FileText, Image as ImageIcon, KeyRound, LogOut, RefreshCw, Save, ServerCog, Trash2, Upload } from 'lucide-vue-next'
 import { apiDelete, apiGet, apiPut, apiPutFile, apiUrl } from '../api'
 import { logout } from '../auth'
 import { appConfig, loadAppBranding } from '../appConfig'
@@ -47,6 +47,16 @@ interface ManagedAsset {
   help: string
 }
 
+type LogSource = 'bot' | 'teamspeak'
+
+interface LogPayload {
+  source: LogSource
+  title: string
+  content: string
+  line_count: number
+  message: string
+}
+
 const GROUPS = [
   ['web', 'Web 配置'],
   ['backend', 'Voice 服务'],
@@ -54,6 +64,7 @@ const GROUPS = [
   ['teamspeak', 'TeamSpeak 配置'],
   ['serverquery', 'ServerQuery 兼容'],
   ['access', '外部 api'],
+  ['logs', '日志'],
 ] as const
 
 const GROUP_ALIASES: Record<string, string> = {
@@ -74,10 +85,16 @@ const loading = ref(true)
 const saving = ref(false)
 const applying = ref(false)
 const error = ref('')
+const activeLogSource = ref<LogSource>('bot')
+const logPayload = ref<LogPayload | null>(null)
+const logLines = ref(200)
+const logsLoading = ref(false)
+const logsError = ref('')
 const toastMessage = ref('')
 const toastType = ref<'success' | 'error' | 'info'>('info')
 let toastTimer: ReturnType<typeof setTimeout> | null = null
 let waitGeneration = 0
+let logLoadGeneration = 0
 
 const activeFields = computed(() => payload.value?.fields.filter((field) => field.group === activeGroup.value) || [])
 const activeAssets = computed(() => payload.value?.assets.filter((asset) => asset.group === activeGroup.value) || [])
@@ -106,6 +123,35 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+async function loadLogs(source = activeLogSource.value) {
+  const generation = ++logLoadGeneration
+  logsLoading.value = true
+  logsError.value = ''
+  if (logPayload.value?.source !== source) {
+    logPayload.value = null
+  }
+  try {
+    const result = await apiGet<LogPayload>(`/admin/logs/${source}?lines=${logLines.value}`)
+    if (generation === logLoadGeneration) {
+      logPayload.value = result
+    }
+  } catch (e: any) {
+    if (generation === logLoadGeneration) {
+      logsError.value = String(e?.message || e)
+      logPayload.value = null
+    }
+  } finally {
+    if (generation === logLoadGeneration) {
+      logsLoading.value = false
+    }
+  }
+}
+
+function selectLogSource(source: LogSource) {
+  activeLogSource.value = source
+  void loadLogs(source)
 }
 
 function showToast(message: string, type: 'success' | 'error' | 'info', duration = 4500) {
@@ -246,6 +292,9 @@ function clearSecret(field: SettingField) {
 function selectGroup(group: string) {
   activeGroup.value = group
   error.value = ''
+  if (group === 'logs') {
+    void loadLogs()
+  }
 }
 
 async function signOut() {
@@ -271,7 +320,7 @@ onBeforeUnmount(() => {
         <p class="text-sm text-gray-500 mt-1">运行配置与服务连接</p>
       </div>
       <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
-        <template v-if="activeGroup !== 'authorization'">
+        <template v-if="activeGroup !== 'authorization' && activeGroup !== 'logs'">
           <button class="btn-secondary settings-header-action" type="button" :disabled="loading || saving || applying" @click="saveConfig">
             <Save :size="17" />
             {{ saving ? '正在保存' : '保存配置' }}
@@ -311,6 +360,56 @@ onBeforeUnmount(() => {
               <h2 class="text-lg font-semibold text-gray-900">{{ GROUPS.find((item) => item[0] === activeGroup)?.[1] }}</h2>
               <span v-if="activeNeedsVoiceRestart" class="theme-settings-restart text-xs px-2 py-1 rounded bg-amber-50 text-amber-700 border border-amber-200">应用时自动重启 Voice</span>
             </div>
+
+            <section v-if="activeGroup === 'logs'" class="theme-settings-panel bg-white border border-gray-200 rounded-lg overflow-hidden">
+              <div class="p-4 md:p-5 border-b border-gray-100 flex flex-col gap-4">
+                <div class="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    :class="['inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors', activeLogSource === 'bot' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100']"
+                    @click="selectLogSource('bot')"
+                  >
+                    <Bot :size="16" />
+                    机器人日志
+                  </button>
+                  <button
+                    type="button"
+                    :class="['inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors', activeLogSource === 'teamspeak' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100']"
+                    @click="selectLogSource('teamspeak')"
+                  >
+                    <FileText :size="16" />
+                    TS 服务器日志
+                  </button>
+                  <div class="ml-auto flex flex-wrap items-center gap-2">
+                    <label class="text-xs text-gray-500 flex items-center gap-2">
+                      显示
+                      <select v-model.number="logLines" class="input-field py-1.5 text-sm" :disabled="logsLoading" @change="loadLogs()">
+                        <option :value="100">100 行</option>
+                        <option :value="200">200 行</option>
+                        <option :value="500">500 行</option>
+                      </select>
+                    </label>
+                    <button type="button" class="btn-secondary py-1.5 px-3 text-sm" :disabled="logsLoading" @click="loadLogs()">
+                      <RefreshCw :size="16" :class="logsLoading ? 'animate-spin' : ''" />
+                      刷新
+                    </button>
+                  </div>
+                </div>
+                <p class="text-xs text-gray-500">
+                  仅管理员可查看。TS 服务器日志需要在“ServerQuery 兼容”中完成配置，且账号拥有读取服务器日志的权限。
+                </p>
+              </div>
+
+              <div class="p-4 md:p-5">
+                <div v-if="logsLoading && !logPayload" class="py-12 text-center text-sm text-gray-500">正在读取日志...</div>
+                <p v-else-if="logsError" class="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{{ logsError }}</p>
+                <template v-else>
+                  <p v-if="logPayload?.message" class="mb-3 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">{{ logPayload.message }}</p>
+                  <pre class="min-h-72 max-h-[62vh] overflow-auto rounded-md bg-slate-950 p-4 text-xs leading-5 text-slate-100 whitespace-pre-wrap break-words font-mono">{{ logPayload?.content || '暂无可显示日志。' }}</pre>
+                  <p v-if="logPayload" class="mt-3 text-xs text-gray-400">已读取 {{ logPayload.line_count }} 行；日志中的密码、Cookie 和 Token 会自动隐藏。</p>
+                </template>
+              </div>
+            </section>
 
             <CookieView v-if="activeGroup === 'authorization'" embedded />
 

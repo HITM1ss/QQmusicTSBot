@@ -1,4 +1,7 @@
+import asyncio
 import unittest
+from pathlib import Path
+import tempfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -7,6 +10,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from backend import main
+from backend import serverquery
 from backend.db import Base
 
 
@@ -32,6 +36,124 @@ class AdminCacheTests(unittest.TestCase):
         self.assertEqual(0, result["removed_bytes"])
         self.assertEqual(0, result["total_size_bytes"])
 
+
+class AdminLogTests(unittest.IsolatedAsyncioTestCase):
+    def test_bot_log_payload_combines_components_and_redacts_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            backend_log = root / "backend.log"
+            voice_log = root / "voice.log"
+            backend_log.write_text(
+                "[INFO] token=secret-token initial_password=another-secret\n"
+                "首次启动管理员账号：admin，初始密码：temporary-password，同时写入文件\n",
+                encoding="utf-8",
+            )
+            voice_log.write_text("[INFO] [voice] ts3 connected\n", encoding="utf-8")
+
+            with (
+                patch.object(main.settings, "log_file", str(backend_log)),
+                patch.object(main, "_voice_log_file_path", return_value=voice_log),
+            ):
+                result = main._bot_log_payload(200)
+
+        self.assertIn("===== 后端 =====", result["content"])
+        self.assertIn("===== Voice =====", result["content"])
+        self.assertIn("token=[已隐藏]", result["content"])
+        self.assertIn("初始密码：[已隐藏]", result["content"])
+        self.assertNotIn("secret-token", result["content"])
+        self.assertNotIn("another-secret", result["content"])
+        self.assertNotIn("temporary-password", result["content"])
+
+    async def test_teamspeak_log_endpoint_uses_serverquery_and_redacts_content(self) -> None:
+        session = unittest.mock.Mock()
+        with (
+            patch.object(main, "require_admin"),
+            patch.object(main, "_serverquery_log_config", return_value=unittest.mock.Mock()),
+            patch.object(
+                main,
+                "query_server_logs",
+                AsyncMock(return_value=["2026-08-23 INFO token=secret-token"]),
+            ) as query_logs,
+        ):
+            result = await main.admin_logs("teamspeak", object(), lines=200, session=session)
+
+        self.assertEqual("teamspeak", result["source"])
+        self.assertEqual(1, result["line_count"])
+        self.assertIn("token=[已隐藏]", result["content"])
+        query_logs.assert_awaited_once()
+
+    def test_serverquery_logview_rows_are_unescaped_and_chronological(self) -> None:
+        entries = serverquery.parse_log_lines([
+            "notifyserverlog last_pos=12 file_size=42 l=2026-08-23\\s10:02:00\\pINFO\\pnewest|l=2026-08-23\\s10:01:00\\pWARN\\polder",
+        ])
+
+        self.assertEqual(
+            [
+                "2026-08-23 10:01:00|WARN|older",
+                "2026-08-23 10:02:00|INFO|newest",
+            ],
+            entries,
+        )
+
+    async def test_serverquery_logview_logs_in_selects_server_and_reads_entries(self) -> None:
+        class FakeWriter:
+            def __init__(self) -> None:
+                self.commands: list[str] = []
+                self.closed = False
+
+            def write(self, data: bytes) -> None:
+                self.commands.append(data.decode("utf-8").strip())
+
+            async def drain(self) -> None:
+                return None
+
+            def close(self) -> None:
+                self.closed = True
+
+            async def wait_closed(self) -> None:
+                return None
+
+        reader = asyncio.StreamReader()
+        reader.feed_data(
+            b"TS3\nWelcome to the TeamSpeak 3 ServerQuery interface\n\n"
+            b"error id=0 msg=ok\n"
+            b"error id=0 msg=ok\n"
+            b"notifyserverlog last_pos=10 file_size=100 "
+            b"l=2026-08-23\\s10:02:00\\pINFO\\pconnected|"
+            b"l=2026-08-23\\s10:01:00\\pWARN\\pretrying\n"
+            b"error id=0 msg=ok\n"
+        )
+        reader.feed_eof()
+        writer = FakeWriter()
+
+        with patch.object(serverquery.asyncio, "open_connection", AsyncMock(return_value=(reader, writer))):
+            entries = await serverquery.query_server_logs(
+                serverquery.ServerQueryConfig(
+                    host="127.0.0.1",
+                    port=10011,
+                    username="server admin",
+                    password="pa ss|/word",
+                    virtual_server_port=9987,
+                ),
+                lines=200,
+            )
+
+        self.assertEqual(
+            [
+                "login client_login_name=server\\sadmin client_login_password=pa\\sss\\p\\/word",
+                "use port=9987",
+                "logview lines=200 begin_pos=0 reverse=1 instance=0",
+            ],
+            writer.commands,
+        )
+        self.assertTrue(writer.closed)
+        self.assertEqual(
+            [
+                "2026-08-23 10:01:00|WARN|retrying",
+                "2026-08-23 10:02:00|INFO|connected",
+            ],
+            entries,
+        )
 
 class QQMusicNormalizationTests(unittest.TestCase):
     def test_playlist_payload_uses_songname_and_songmid_fields(self) -> None:

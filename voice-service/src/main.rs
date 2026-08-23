@@ -18,7 +18,7 @@ use tokio::sync::{broadcast, mpsc, watch, Mutex};
 use tokio_stream::wrappers::{BroadcastStream, TcpListenerStream};
 use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 mod logger;
 
@@ -265,11 +265,18 @@ fn now_unix_ms() -> i64 {
 }
 
 fn emit_log(events_tx: &broadcast::Sender<voicev1::Event>, level: i32, msg: impl Into<String>) {
+    let message = msg.into();
+    match level {
+        1 => debug!("{message}"),
+        2 => info!("{message}"),
+        3 => warn!("{message}"),
+        _ => error!("{message}"),
+    }
     let _ = events_tx.send(voicev1::Event {
         unix_ms: now_unix_ms(),
         payload: Some(voicev1::event::Payload::Log(voicev1::LogEvent {
             level,
-            message: msg.into(),
+            message,
         })),
     });
 }
@@ -349,7 +356,6 @@ impl VoiceService for VoiceServiceImpl {
         let desc = r.description;
         let msg = format!("set client_description requested (len={})", desc.len());
         emit_log(&self.events_tx, 2, msg.clone());
-        info!("{msg}");
         if desc.len() > 700 {
             return Ok(Response::new(voicev1::CommandResponse {
                 ok: false,
@@ -385,7 +391,6 @@ impl VoiceService for VoiceServiceImpl {
                 Err(e) => {
                     let msg = format!("serverquery set description failed: {e}");
                     emit_log(&self.events_tx, 3, msg.clone());
-                    warn!("{msg}");
                     return Ok(Response::new(voicev1::CommandResponse {
                         ok: false,
                         message: msg,
@@ -398,7 +403,6 @@ impl VoiceService for VoiceServiceImpl {
             if !DIRECT_DESCRIPTION_UPDATE_WARNED.swap(true, Ordering::Relaxed) {
                 let msg = "client_description sync skipped: configure ServerQuery or set TSBOT_TS3_ALLOW_DIRECT_CLIENTUPDATE_DESCRIPTION=1";
                 emit_log(&self.events_tx, 3, msg);
-                warn!("{msg}");
             }
 
             return Ok(Response::new(voicev1::CommandResponse {
@@ -1332,7 +1336,6 @@ async fn ts3_actor(
                                     }
                                     let msg = format!("ts3 stream item: {s}");
                                     emit_log(&events_tx, 3, msg.clone());
-                                    warn!("{msg}");
                                 }
                             }
 
@@ -1396,7 +1399,6 @@ async fn ts3_actor(
                             out_buf_max, out_buf_drops, send_jitter_max_ms, send_audio_errs
                         );
                         emit_log(&events_tx, 2, msg.clone());
-                        info!("{msg}");
                         out_buf_max = out_buf.len();
                         send_jitter_max_ms = 0;
                         send_audio_errs = 0;

@@ -863,6 +863,27 @@ curl -X POST "http://127.0.0.1:8009/external/queue" \
 }
 ```
 
+### 11.3 管理员日志接口
+
+这些接口使用 Web 管理员登录会话，不接受外部 API Token。`lines` 可选，范围为 20～500，默认 200。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/admin/logs/bot` | 读取后端与 Voice 服务的机器人日志 |
+| `GET` | `/admin/logs/teamspeak` | 通过 ServerQuery 的只读 `logview` 读取 TeamSpeak 服务器日志 |
+
+TeamSpeak 日志需要已配置 `voice.serverquery_*`，并且 ServerQuery 账号具有日志读取权限。响应中的 `content` 会自动隐藏密码、Cookie 和 Token：
+
+```json
+{
+  "source": "bot",
+  "title": "机器人日志",
+  "content": "===== 后端 =====\\n...",
+  "line_count": 200,
+  "message": ""
+}
+```
+
 ## 12. 常见调用流程
 
 ### 12.1 外部机器人接入推荐流程

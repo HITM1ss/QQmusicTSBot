@@ -41,6 +41,7 @@ TSBot 实现了跨三个组件的统一日志系统，提供一致的日志格�
 # 日志配置
 TSBOT_LOG_LEVEL=INFO          # 后端和语音服务日志级别
 TSBOT_LOG_FILE=logs/backend.log  # 后端日志文件路径
+TSBOT_VOICE_LOG_FILE=logs/voice.log # Voice 日志文件路径
 VITE_LOG_LEVEL=INFO           # 前端日志级别
 ```
 
@@ -52,7 +53,16 @@ VITE_LOG_LEVEL=INFO           # 前端日志级别
 
 ## 日志查看工具
 
-### 1. 统一日志查看器
+### 1. Web 系统配置日志页
+
+管理员登录后，进入“系统配置 → 日志”：
+
+- **机器人日志**：显示后端与 Voice 服务最近的日志。
+- **TS 服务器日志**：通过 ServerQuery 的只读 `logview` 命令读取最近日志；需要先在“ServerQuery 兼容”中配置账号，且该账号有读取服务器日志的权限。
+
+页面最多读取 500 行，并自动隐藏日志中出现的密码、Cookie、Token 和初始管理员密码。TS 服务器日志可能包含用户连接信息，仅应授权给受信任的管理员。
+
+### 2. 统一日志查看器
 ```bash
 # 实时查看所有组件日志
 ./scripts/log-viewer.sh
@@ -69,13 +79,13 @@ VITE_LOG_LEVEL=INFO           # 前端日志级别
 ./scripts/log-viewer.sh --no-color
 ```
 
-### 2. 统一日志合并器
+### 3. 统一日志合并器
 ```bash
 # 启动统一日志监控 (将所有日志合并到 logs/unified.log)
 ./scripts/unified-logger.sh
 ```
 
-### 3. 直接查看日志文件
+### 4. 直接查看日志文件
 ```bash
 # 查看各组件日志
 tail -f logs/backend.log

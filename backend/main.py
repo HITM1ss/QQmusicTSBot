@@ -42,6 +42,8 @@ from .auth import (
     hash_password,
 )
 from .runtime_config import (
+    DEFINITION_BY_KEY,
+    get_value,
     initialize_runtime_settings,
     settings_payload,
     update_settings,
@@ -50,6 +52,7 @@ from .runtime_config import (
 )
 from .managed_assets import ASSET_BY_KEY, asset_path, asset_payload, delete_asset, detect_image_type, save_asset, MAX_IMAGE_BYTES
 from .qqmusic import QQMusicClient
+from .serverquery import ServerQueryConfig, ServerQueryError, query_server_logs
 from .voice_client import VoiceClient, VoiceStatus
 from .config import settings
 from .logger import logger
@@ -69,6 +72,16 @@ qqmusic = QQMusicClient()
 voice = VoiceClient()
 
 _QQMUSIC_QUEUE_META_PREFIX = "__qqmusic_quality__:"
+_LOG_VIEW_MIN_LINES = 20
+_LOG_VIEW_MAX_LINES = 500
+_LOG_VIEW_MAX_BYTES = 256 * 1024
+_LOG_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)(?<![A-Za-z0-9_])"
+    r"([A-Za-z0-9_.-]*(?:authorization|cookie|token|password|secret|key)[A-Za-z0-9_.-]*|MUSIC_U|qm_keyst|uin)"
+    r"(\s*[:=]\s*)([^\s,;，；]+)"
+)
+_INITIAL_PASSWORD_RE = re.compile(r"(初始密码\s*[：:]\s*)([^，,\s]+)")
+_BEARER_TOKEN_RE = re.compile(r"(?i)(bearer\s+)([^\s,;，；]+)")
 
 # Add OPTIONS handler for CORS preflight requests
 @app.options("/{full_path:path}")
@@ -2679,6 +2692,139 @@ def _cache_status_payload() -> dict:
         "memory_entries": {},
         "total_size_bytes": 0,
         "total_file_count": 0,
+    }
+
+
+def _log_line_limit(lines: int) -> int:
+    return max(_LOG_VIEW_MIN_LINES, min(int(lines), _LOG_VIEW_MAX_LINES))
+
+
+def _runtime_path(value: object, default: str) -> Path:
+    path = Path(str(value or default).strip() or default)
+    if not path.is_absolute():
+        path = Path(__file__).resolve().parent.parent / path
+    return path
+
+
+def _voice_log_file_path() -> Path:
+    return _runtime_path(os.getenv("TSBOT_VOICE_LOG_FILE", "./logs/voice.log"), "./logs/voice.log")
+
+
+def _tail_log_file(path: Path, *, lines: int) -> str:
+    """Read the final log lines while bounding memory use for large files."""
+    try:
+        if not path.is_file():
+            return ""
+        with path.open("rb") as file:
+            file.seek(0, os.SEEK_END)
+            size = file.tell()
+            start = max(0, size - _LOG_VIEW_MAX_BYTES)
+            file.seek(start)
+            data = file.read()
+    except OSError:
+        return ""
+
+    if start:
+        first_newline = data.find(b"\n")
+        if first_newline >= 0:
+            data = data[first_newline + 1:]
+    text = data.decode("utf-8", errors="replace")
+    return "\n".join(text.splitlines()[-lines:])
+
+
+def _redact_log_secrets(content: str) -> str:
+    """Avoid exposing accidental credentials through the administrator log UI."""
+    redacted = _LOG_SECRET_ASSIGNMENT_RE.sub(r"\1\2[已隐藏]", content)
+    redacted = _INITIAL_PASSWORD_RE.sub(r"\1[已隐藏]", redacted)
+    return _BEARER_TOKEN_RE.sub(r"\1[已隐藏]", redacted)
+
+
+def _bot_log_payload(lines: int) -> dict:
+    sources = (
+        ("后端", _runtime_path(settings.log_file, "./logs/backend.log")),
+        ("Voice", _voice_log_file_path()),
+    )
+    sections: list[str] = []
+    missing_sources: list[str] = []
+    line_count = 0
+    for label, path in sources:
+        content = _tail_log_file(path, lines=lines)
+        if content:
+            sections.append(f"===== {label} =====\n{_redact_log_secrets(content)}")
+            line_count += len(content.splitlines())
+        else:
+            missing_sources.append(label)
+
+    message = ""
+    if missing_sources:
+        labels = "、".join(missing_sources)
+        message = f"{labels} 日志文件尚未生成或暂时没有内容。"
+    return {
+        "source": "bot",
+        "title": "机器人日志",
+        "content": "\n\n".join(sections),
+        "line_count": line_count,
+        "message": message,
+    }
+
+
+def _serverquery_log_config(session: Session) -> ServerQueryConfig:
+    def value(key: str) -> str:
+        return str(get_value(session, DEFINITION_BY_KEY[key]) or "").strip()
+
+    username = value("voice.serverquery_user")
+    password = value("voice.serverquery_password")
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="请先在 ServerQuery 兼容中配置用户名和密码")
+
+    host = value("voice.serverquery_host") or value("voice.ts3_host") or "127.0.0.1"
+    try:
+        port = int(value("voice.serverquery_port") or "10011")
+        virtual_server_port = int(value("voice.serverquery_use_port") or value("voice.ts3_port") or "9987")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="ServerQuery 端口配置无效") from exc
+    if not 1 <= port <= 65535 or not 1 <= virtual_server_port <= 65535:
+        raise HTTPException(status_code=400, detail="ServerQuery 端口配置无效")
+
+    return ServerQueryConfig(
+        host=host,
+        port=port,
+        username=username,
+        password=password,
+        virtual_server_sid=value("voice.serverquery_sid"),
+        virtual_server_port=virtual_server_port,
+    )
+
+
+@app.get("/admin/logs/{source}")
+async def admin_logs(
+    source: str,
+    request: Request,
+    lines: int = 200,
+    session: Session = Depends(get_session),
+) -> dict:
+    """Read recent bot logs or TeamSpeak server logs for an authenticated admin."""
+    require_admin(request, session)
+    line_limit = _log_line_limit(lines)
+    normalized_source = (source or "").strip().lower()
+
+    if normalized_source == "bot":
+        return _bot_log_payload(line_limit)
+    if normalized_source != "teamspeak":
+        raise HTTPException(status_code=404, detail="未知日志来源")
+
+    try:
+        entries = await query_server_logs(_serverquery_log_config(session), lines=line_limit)
+    except ServerQueryError as exc:
+        logger.warning("读取 TeamSpeak 服务器日志失败: %s", exc)
+        raise HTTPException(status_code=502, detail=f"无法读取 TeamSpeak 服务器日志：{exc}") from exc
+
+    return {
+        "source": "teamspeak",
+        "title": "TeamSpeak 服务器日志",
+        "content": _redact_log_secrets("\n".join(entries)),
+        "line_count": len(entries),
+        "message": "" if entries else "没有可显示的 TeamSpeak 服务器日志。",
     }
 
 
