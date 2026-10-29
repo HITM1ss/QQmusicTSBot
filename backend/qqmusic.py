@@ -6,6 +6,7 @@ from http.cookies import SimpleCookie
 import json
 import time
 import httpx
+from .logger import logger
 
 
 class QQMusicClient:
@@ -50,23 +51,6 @@ class QQMusicClient:
 
         if uin_val.isdigit():
             self._uin = uin_val
-            print(f"[DEBUG] Extracted QQ Music UIN: {self._uin}")
-        else:
-            print("[DEBUG] No valid numeric UIN found in QQ Music cookie")
-        
-        # 检查 VIP 相关的 cookie 字段
-        vip_indicators = ["vip", "musickey", "musicid", "qm_keyst", "qqmusic_key"]
-        found_vip_cookies = []
-        for part in cookie_str.split(";"):
-            for indicator in vip_indicators:
-                if indicator in part.lower():
-                    found_vip_cookies.append(part.strip())
-        
-        if found_vip_cookies:
-            names = [part.split("=", 1)[0].strip() for part in found_vip_cookies]
-            print(f"[DEBUG] Found QQ Music account cookie fields: {', '.join(names)}")
-        else:
-            print("[DEBUG] No QQ Music account cookie fields found")
 
     def get_cookie(self) -> str:
         """获取当前 Cookie"""
@@ -145,7 +129,6 @@ class QQMusicClient:
             }
         }
         
-        print(f"[DEBUG] Using UIN: {uin}, g_tk: {g_tk}")
         
         headers = {
             "accept": "application/json, text/plain, */*",
@@ -507,7 +490,7 @@ class QQMusicClient:
         
         # First, initialize login session to get pt_login_sig
         try:
-            print("Initializing QQ login session...")
+            logger.info("QQ 音乐扫码：开始创建登录会话")
             xlogin_url = "https://xui.ptlogin2.qq.com/cgi-bin/xlogin"
             xlogin_params = {
                 "appid": "716027609",
@@ -530,14 +513,12 @@ class QQMusicClient:
             async with httpx.AsyncClient(timeout=15, headers=headers, follow_redirects=True) as client:
                 # Initialize session
                 xlogin_response = await client.get(xlogin_url, params=xlogin_params)
-                print(f"XLogin response status: {xlogin_response.status_code}")
-                print(f"XLogin cookies: {xlogin_response.cookies}")
+                logger.info("QQ 音乐扫码：初始化响应 HTTP %s", xlogin_response.status_code)
                 
                 # Get pt_login_sig from cookies
                 pt_login_sig = None
                 if xlogin_response.cookies:
                     pt_login_sig = xlogin_response.cookies.get("pt_login_sig")
-                    print(f"Got pt_login_sig: {pt_login_sig}")
                 
                 if not pt_login_sig:
                     raise Exception("Failed to get pt_login_sig from xlogin")
@@ -548,6 +529,7 @@ class QQMusicClient:
                     self._session_cookies[name] = value
                 
                 self._pt_login_sig = pt_login_sig
+                self._last_qr_status = None
                 
                 # Now get QR code
                 timestamp = str(int(time.time() * 1000))
@@ -567,10 +549,8 @@ class QQMusicClient:
                     "pt_3rd_aid": "100497308"
                 }
                 
-                print(f"Requesting QR code with token: {qr_token}")
                 qr_response = await client.get(qr_url, params=qr_params)
-                print(f"QR response status: {qr_response.status_code}")
-                print(f"QR response cookies: {qr_response.cookies}")
+                logger.info("QQ 音乐扫码：二维码响应 HTTP %s", qr_response.status_code)
                 
                 qr_response.raise_for_status()
                 
@@ -578,7 +558,6 @@ class QQMusicClient:
                 qrsig = None
                 if qr_response.cookies:
                     qrsig = qr_response.cookies.get("qrsig")
-                    print(f"Got qrsig: {qrsig}")
                     
                     # Add qrsig to session cookies
                     self._session_cookies["qrsig"] = qrsig
@@ -595,7 +574,7 @@ class QQMusicClient:
                 # Calculate ptqrtoken using qrsig
                 ptqrtoken = self._hash33(qrsig)
                 
-                print(f"Generated ptqrtoken: {ptqrtoken}")
+                logger.info("QQ 音乐扫码：二维码已生成，等待扫码")
                 
                 return {
                     "qr_url": qr_url_full,
@@ -610,8 +589,8 @@ class QQMusicClient:
                     }
                 }
         except Exception as e:
-            print(f"QR generation error: {e}")
-            raise Exception(f"获取二维码失败: {str(e)}")
+            logger.warning("QQ 音乐扫码：生成二维码失败，异常类型 %s", type(e).__name__)
+            raise Exception(f"获取二维码失败（{type(e).__name__}）") from None
 
     def _cookie_header_from_session(self) -> str:
         parts: list[str] = []
@@ -645,6 +624,7 @@ class QQMusicClient:
             r = await client.get(auth_url)
             # 不强制 2xx：有些情况下会 302 / 3xx
             self._merge_response_cookies_into_session(r.cookies)
+            logger.info("QQ 音乐扫码：授权回调 HTTP %s，响应携带 Cookie=%s，重定向=%s", r.status_code, bool(r.cookies), r.is_redirect)
 
         # 将 session cookies 写入通用 cookie（供后续 musicu 请求使用）
         final_cookie = self._cookie_header_from_session()
@@ -654,9 +634,14 @@ class QQMusicClient:
         # 访问 QQ 音乐页面来获取完整的音乐服务 cookie（包括 VIP 认证）
         try:
             await self._fetch_qqmusic_cookies()
-            print("[DEBUG] Successfully fetched QQ Music cookies after login")
         except Exception as e:
-            print(f"[DEBUG] Failed to fetch QQ Music cookies: {e}")
+            logger.warning("QQ 音乐扫码：获取音乐登录信息失败，异常类型 %s", type(e).__name__)
+
+        names = {part.split("=", 1)[0].strip().lower() for part in self._cookie.split(";") if "=" in part}
+        has_music_key = bool(names & {"qm_keyst", "qqmusic_key", "musickey"})
+        logger.info("QQ 音乐扫码：登录信息检查，有账号标识=%s，有音乐密钥=%s（未验证有效性）", bool(self._uin), has_music_key)
+        if not has_music_key:
+            logger.warning("QQ 音乐扫码：未获取到音乐密钥，保存 Cookie 不代表音乐会员登录成功")
 
         return {
             "ok": True,
@@ -708,6 +693,7 @@ class QQMusicClient:
                 import re
                 match = re.search(r"ptuiCB\((.*?)\)", response_text)
                 if not match:
+                    logger.warning("QQ 音乐扫码：状态响应无法解析，HTTP %s", response.status_code)
                     return {"status": "error", "message": "获取二维码状态失败"}
 
                 callback_data = match.group(1)
@@ -719,6 +705,9 @@ class QQMusicClient:
                 if not code_str.isdigit():
                     return {"status": "error", "message": f"未知状态码: {code_str}"}
                 code = int(code_str)
+                if code != getattr(self, "_last_qr_status", None):
+                    logger.info("QQ 音乐扫码：状态码 %s", code)
+                    self._last_qr_status = code
 
                 if code == 0:
                     auth_url = data[2] if len(data) > 2 else ""
@@ -744,6 +733,7 @@ class QQMusicClient:
                 message = data[4] if len(data) > 4 and data[4] else f"状态码: {code}"
                 return {"status": "waiting", "message": message}
         except Exception as e:
+            logger.warning("QQ 音乐扫码：状态查询失败，异常类型 %s", type(e).__name__)
             return {"status": "error", "message": f"检查登录状态失败: {str(e)}"}
 
     async def _authorize_qq_qr(self, uin: str, sigx: str) -> dict[str, Any]:
@@ -866,24 +856,17 @@ class QQMusicClient:
             headers["Cookie"] = cookie_header
         
         async with httpx.AsyncClient(timeout=15, headers=headers, follow_redirects=True) as client:
-            for url in urls_to_visit:
+            for index, url in enumerate(urls_to_visit, start=1):
                 try:
-                    print(f"[DEBUG] Visiting {url} to fetch QQ Music cookies")
                     r = await client.get(url)
                     self._merge_response_cookies_into_session(r.cookies)
-                    
-                    # 检查是否获取到音乐相关的 cookie
-                    new_cookies = dict(r.cookies)
-                    music_cookies = [k for k in new_cookies.keys() if any(indicator in k.lower() for indicator in ["music", "vip", "qm_", "qqmusic"])]
-                    if music_cookies:
-                        print(f"[DEBUG] Found music cookies from {url}: {music_cookies}")
+                    logger.info("QQ 音乐扫码：音乐页面 %s 响应 HTTP %s，携带 Cookie=%s", index, r.status_code, bool(r.cookies))
                     
                 except Exception as e:
-                    print(f"[DEBUG] Failed to visit {url}: {e}")
+                    logger.warning("QQ 音乐扫码：音乐页面 %s 请求失败，异常类型 %s", index, type(e).__name__)
                     continue
         
         # 更新最终的 cookie
         final_cookie = self._cookie_header_from_session()
         if final_cookie:
             self.set_cookie(final_cookie)
-            print(f"[DEBUG] Updated cookie after fetching QQ Music cookies")

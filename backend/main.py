@@ -3503,6 +3503,17 @@ async def qqmusic_qr_check(qr_key: str, ptqrtoken: str, pt_login_sig: str = "") 
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class QQMusicQRCheckRequest(BaseModel):
+    qr_key: str
+    ptqrtoken: str
+    pt_login_sig: str = ""
+
+
+@app.post("/qqmusic/login/qr/check")
+async def qqmusic_qr_check_post(req: QQMusicQRCheckRequest) -> dict:
+    return await qqmusic_qr_check(req.qr_key, req.ptqrtoken, req.pt_login_sig)
+
+
 class QQMusicCookieSetRequest(BaseModel):
     cookie: str
 
@@ -3539,6 +3550,18 @@ async def admin_qqmusic_set_cookie(
     return {"ok": True, "admin_cookie_set": True, "uin": qqmusic.get_uin()}
 
 
+@app.delete("/admin/qqmusic/cookie")
+async def admin_qqmusic_delete_cookie(request: Request, session: Session = Depends(get_session)) -> dict:
+    _require_admin_token(request)
+    row = session.get(Secret, "qqmusic_cookie")
+    if row:
+        session.delete(row)
+        session.commit()
+    qqmusic.set_cookie("")
+    qqmusic._session_cookies = {}
+    return {"ok": True, "admin_cookie_set": False}
+
+
 @app.post("/admin/qqmusic/qr/confirm")
 async def admin_qqmusic_qr_confirm(
     req: QQMusicQRConfirmRequest,
@@ -3547,14 +3570,21 @@ async def admin_qqmusic_qr_confirm(
 ) -> dict:
     """管理员扫码成功后确认登录，获取并保存最终 cookies"""
     _require_admin_token(request)
-    r = await qqmusic.confirm_qr_login(req.auth_url)
+    try:
+        r = await qqmusic.confirm_qr_login(req.auth_url)
+    except Exception as exc:
+        logger.warning("QQ 音乐扫码：授权回调失败，异常类型 %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="QQ 音乐扫码授权回调失败，请查看后端日志") from None
     c = (qqmusic.get_cookie() or "").strip()
-    print(f"[DEBUG] QR confirm - received cookie length: {len(c)}")
     if c:
-        _set_secret(session, "qqmusic_cookie", c)
-        print(f"[DEBUG] QR confirm - cookie saved to database")
+        try:
+            _set_secret(session, "qqmusic_cookie", c)
+        except Exception as exc:
+            logger.warning("QQ 音乐扫码：保存登录信息失败，异常类型 %s", type(exc).__name__)
+            raise HTTPException(status_code=500, detail="保存 QQ 音乐登录信息失败，请查看后端日志") from None
+        logger.info("QQ 音乐扫码：登录信息已保存到数据库，尚未验证有效性")
     else:
-        print(f"[DEBUG] QR confirm - no cookie to save")
+        logger.warning("QQ 音乐扫码：未获得登录信息，未保存")
     return {"ok": True, "admin_cookie_set": bool(c), "uin": qqmusic.get_uin(), "raw": r}
 
 

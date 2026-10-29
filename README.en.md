@@ -73,6 +73,7 @@ Playback URLs and user playlists normally require a valid QQ Music login state. 
 
 - GET /admin/qqmusic/status
 - POST /admin/qqmusic/cookie
+- DELETE /admin/qqmusic/cookie
 - POST /admin/qqmusic/qr/confirm
 
 In TeamSpeak chat, `点歌 <song_mid|keywords>` places the matched QQ Music song next in the queue without interrupting the current track. Use `add` to append normally.

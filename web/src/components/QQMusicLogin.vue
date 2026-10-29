@@ -54,7 +54,6 @@ async function startQRLogin() {
   try {
     console.log('Starting QR login...')
     const result = await apiGet<any>('/qqmusic/login/qr/key')
-    console.log('QR Key Result:', result)
     
     if (result.qr_image_base64) {
       qrUrl.value = `data:image/png;base64,${result.qr_image_base64}`
@@ -66,10 +65,6 @@ async function startQRLogin() {
     ptLoginSig.value = result.pt_login_sig
     loginStatus.value = 'qr_waiting'
     
-    console.log('QR URL:', result.qr_url)
-    console.log('QR Key:', result.qr_key)
-    console.log('PTQRToken:', result.ptqrtoken)
-    console.log('PTLoginSig:', result.pt_login_sig)
     
     // Start polling for login status
     startStatusPolling()
@@ -88,30 +83,21 @@ function startStatusPolling() {
   
   statusCheckInterval.value = window.setInterval(async () => {
     try {
-      const result = await apiGet<any>(`/qqmusic/login/qr/check?qr_key=${qrKey.value}&ptqrtoken=${ptqrtoken.value}&pt_login_sig=${ptLoginSig.value}`)
-      
-      console.log('QR Status Check Result:', result)
+      const result = await apiPost<any>('/qqmusic/login/qr/check', {
+        qr_key: qrKey.value, ptqrtoken: ptqrtoken.value, pt_login_sig: ptLoginSig.value,
+      })
       
       if (result.status === 'scanning') {
         console.log('QR Code is being scanned')
         loginStatus.value = 'qr_scanning'
       } else if (result.status === 'success') {
-        console.log('Login successful!', result)
         stopStatusPolling()
         
         // Handle successful login with authorization info
         if (result.uin) {
           userInfo.value = { uin: result.uin }
-          console.log('Got UIN:', result.uin)
-          
-          // If we have sigx, we could potentially get full cookies
-          if (result.sigx) {
-            console.log('Login successful with sigx:', result.sigx)
-            // TODO: Use sigx to get QQ Music cookies
-          }
           
           if (result.auth_url) {
-            console.log('Auth URL:', result.auth_url)
             try {
               await apiPost('/admin/qqmusic/qr/confirm', { auth_url: result.auth_url })
               // Re-check status after confirm
@@ -143,7 +129,7 @@ function startStatusPolling() {
         console.log('Still waiting for scan...')
         // Continue polling
       } else {
-        console.log('Unknown status:', result.status, result)
+        console.log('Unknown status:', result.status)
       }
     } catch (e: any) {
       console.error('Status check failed:', e)

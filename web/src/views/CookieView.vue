@@ -43,7 +43,7 @@
                         : 'bg-gray-100 text-gray-600 border-gray-200'
                     ]"
                   >
-                    {{ qqAdminStatus ? '已授权' : '未授权' }}
+                    {{ qqAdminStatus ? '已保存' : '未配置' }}
                   </span>
                 </h2>
                 <p class="text-gray-500 text-sm mt-2">用于服务器端点歌播放（Cookie 加密存储在服务器，不做返回）</p>
@@ -54,7 +54,7 @@
               <div class="flex flex-col md:flex-row gap-8">
                 <div class="flex-1 space-y-6">
                   <div class="flex flex-wrap gap-3">
-                    <button @click="startQQAdminQr" class="btn-primary shadow-blue-200">
+                    <button @click="startQQAdminQr" :disabled="qqAdminDeleting || qqAdminQrStarting" class="btn-primary shadow-blue-200">
                       <QrCode :size="18" />
                       扫码授权
                     </button>
@@ -66,7 +66,7 @@
 
                   <div v-if="qqAdminStatus" class="flex items-center gap-2 text-sm text-green-600 font-medium">
                     <CheckCircle2 :size="16" />
-                    服务器已配置有效 Cookie
+                    服务器已保存 Cookie，登录有效性未验证
                   </div>
                 </div>
 
@@ -95,7 +95,7 @@
                     placeholder="输入 Cookie 字符串 (uin=...; p_skey=... 等)"
                     class="input-field flex-1 font-mono text-sm"
                   />
-                  <button @click="setQQAdminCookie" class="btn-secondary whitespace-nowrap font-medium">
+                  <button @click="setQQAdminCookie" :disabled="qqAdminDeleting || qqAdminSaving" class="btn-secondary whitespace-nowrap font-medium">
                     保存配置
                   </button>
                 </div>
@@ -103,6 +103,9 @@
                   <AlertCircle :size="12" />
                   QQ音乐获取播放链接通常需要登录态 cookie。
                 </p>
+                <button @click="deleteQQAdminCookie" :disabled="qqAdminDeleting || qqAdminSaving || qqAdminQrStarting" class="btn-secondary mt-4 text-red-600">
+                  {{ qqAdminDeleting ? '正在删除…' : '删除已保存的登录' }}
+                </button>
               </div>
             </div>
           </div>
@@ -115,7 +118,7 @@
 
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
-import { apiGet, apiPost } from '../api'
+import { apiDelete, apiGet, apiPost } from '../api'
 import { 
   Settings, 
   Info, 
@@ -140,10 +143,14 @@ const qqAdminPtLoginSig = ref('')
 const qqAdminAuthUrl = ref('')
 
 const qqAdminManualCookie = ref('')
+const qqAdminDeleting = ref(false)
+const qqAdminSaving = ref(false)
+const qqAdminQrStarting = ref(false)
 
 const status = ref('')
 
 let qqAdminTimer: number | null = null
+const qqAdminChecks = new Set<Promise<void>>()
 
 function getAdminHeaders(): Record<string, string> {
   return {}
@@ -162,6 +169,7 @@ async function load() {
 
 async function startQQAdminQr() {
   status.value = ''
+  qqAdminQrStarting.value = true
   try {
     stopQQAdminPoll()
     qqAdminQrImg.value = ''
@@ -177,9 +185,15 @@ async function startQQAdminQr() {
     if (!qqAdminQrKey.value || !qqAdminPtqrtoken.value) throw new Error('failed to get qqmusic qr key')
 
     status.value = 'qqmusic admin qr created'
-    qqAdminTimer = window.setInterval(checkQQAdminQr, 1500)
+    qqAdminTimer = window.setInterval(() => {
+      const check = checkQQAdminQr()
+      qqAdminChecks.add(check)
+      void check.finally(() => qqAdminChecks.delete(check))
+    }, 1500)
   } catch (e: any) {
     status.value = String(e?.message ?? e)
+  } finally {
+    qqAdminQrStarting.value = false
   }
 }
 
@@ -187,11 +201,11 @@ async function checkQQAdminQr() {
   status.value = ''
   try {
     if (!qqAdminQrKey.value || !qqAdminPtqrtoken.value) return
-    const r = await apiGet<any>(
-      `/qqmusic/login/qr/check?qr_key=${encodeURIComponent(qqAdminQrKey.value)}` +
-        `&ptqrtoken=${encodeURIComponent(qqAdminPtqrtoken.value)}` +
-        `&pt_login_sig=${encodeURIComponent(qqAdminPtLoginSig.value)}`
-    )
+    const r = await apiPost<any>('/qqmusic/login/qr/check', {
+      qr_key: qqAdminQrKey.value,
+      ptqrtoken: qqAdminPtqrtoken.value,
+      pt_login_sig: qqAdminPtLoginSig.value,
+    })
     const st = String(r?.status || '')
 
     if (st === 'waiting') {
@@ -219,7 +233,7 @@ async function checkQQAdminQr() {
       return
     }
 
-    status.value = `qqmusic qr unknown: status=${st}`
+    status.value = st === 'error' ? String(r?.message || '检查二维码状态失败') : `qqmusic qr unknown: status=${st}`
   } catch (e: any) {
     status.value = String(e?.message ?? e)
   }
@@ -227,6 +241,7 @@ async function checkQQAdminQr() {
 
 async function setQQAdminCookie() {
   status.value = ''
+  qqAdminSaving.value = true
   try {
     const cookie = qqAdminManualCookie.value
     if (!cookie.trim()) throw new Error('cookie is empty')
@@ -236,6 +251,26 @@ async function setQQAdminCookie() {
     await load()
   } catch (e: any) {
     status.value = String(e?.message ?? e)
+  } finally {
+    qqAdminSaving.value = false
+  }
+}
+
+async function deleteQQAdminCookie() {
+  if (!window.confirm('确定要删除保存的 QQ 音乐登录信息吗？删除后需要重新授权。')) return
+  qqAdminDeleting.value = true
+  stopQQAdminPoll()
+  qqAdminQrImg.value = ''
+  try {
+    await Promise.all(qqAdminChecks)
+    await apiDelete('/admin/qqmusic/cookie', getAdminHeaders())
+    qqAdminManualCookie.value = ''
+    qqAdminStatus.value = false
+    status.value = '已删除保存的 QQ 音乐登录信息'
+  } catch (e: any) {
+    status.value = String(e?.message ?? e)
+  } finally {
+    qqAdminDeleting.value = false
   }
 }
 

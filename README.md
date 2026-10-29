@@ -81,6 +81,7 @@ QQ 音乐播放地址和用户歌单通常需要有效登录态。管理员可�
 
 - GET /admin/qqmusic/status：检查 Cookie 是否已配置
 - POST /admin/qqmusic/cookie：保存 Cookie
+- DELETE /admin/qqmusic/cookie：删除保存的登录信息
 - POST /admin/qqmusic/qr/confirm：确认扫码并保存登录态
 
 TeamSpeak 聊天支持以下常用命令：

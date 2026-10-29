@@ -772,19 +772,22 @@ curl -X POST "http://127.0.0.1:8009/external/queue" \
 | --- | --- | --- |
 | `GET` | `/qqmusic/login/qr/key` | 获取 QQ 音乐登录二维码 |
 | `GET` | `/qqmusic/login/qr/check` | 检查二维码状态 |
+| `POST` | `/qqmusic/login/qr/check` | 检查二维码状态，参数放在 JSON 请求体中 |
 | `POST` | `/qqmusic/login/cookie` | 在当前进程内设置 QQ 音乐 cookie |
 | `GET` | `/qqmusic/login/status` | 当前进程内登录状态 |
 | `POST` | `/qqmusic/login/refresh` | 刷新登录状态 |
 | `GET` | `/qqmusic/user/info` | 当前登录用户信息 |
 | `GET` | `/qqmusic/user/playlists` | 当前登录用户歌单 |
 
-`/qqmusic/login/qr/check` 查询参数：
+`/qqmusic/login/qr/check` 的 GET 查询参数或 POST JSON 字段：
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `qr_key` | string | 是 | 二维码 key |
 | `ptqrtoken` | string | 是 | 扫码 token |
 | `pt_login_sig` | string | 否 | 登录签名 |
+
+推荐使用 POST，避免将登录参数放进服务器访问日志中的 URL。GET 保留用于兼容旧客户端。
 
 `/qqmusic/login/cookie` 请求体：
 
@@ -845,6 +848,7 @@ curl -X POST "http://127.0.0.1:8009/external/queue" \
 | --- | --- | --- | --- |
 | `GET` | `/admin/qqmusic/status` | 是 | 是否已保存管理员 QQ 音乐 cookie |
 | `POST` | `/admin/qqmusic/cookie` | 是 | 写入管理员 QQ 音乐 cookie |
+| `DELETE` | `/admin/qqmusic/cookie` | 是 | 删除已保存的 QQ 音乐登录信息并清除客户端状态 |
 | `POST` | `/admin/qqmusic/qr/confirm` | 是 | 将扫码授权后的 `auth_url` 换成最终 cookie 并保存 |
 
 `POST /admin/qqmusic/cookie` 请求体：
