@@ -77,6 +77,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  validate_updater:
+    name: Validate updater on Ubuntu 22.04
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate installation and systemd units
+        run: |
+          bash -n scripts/install-updater.sh
+          python3 -m unittest discover -s tests -p 'test_updater_installation.py'
+
   prepare_release:
     name: Prepare release version
     runs-on: ubuntu-latest
@@ -118,7 +128,7 @@ jobs:
           echo "should_release=${should_release}" >> "$GITHUB_OUTPUT"
 
   publish:
-    needs: prepare_release
+    needs: [prepare_release, validate_updater]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

@@ -4,6 +4,7 @@ import asyncio
 from collections import deque
 import hashlib
 import hmac
+import json
 import math
 import os
 import random
@@ -51,7 +52,7 @@ from .runtime_config import (
     write_voice_config,
 )
 from .managed_assets import ASSET_BY_KEY, asset_path, asset_payload, delete_asset, detect_image_type, save_asset, MAX_IMAGE_BYTES
-from .qqmusic import QQMusicClient
+from .qqmusic import QQMusicClient, QQMusicLoginError
 from .serverquery import ServerQueryConfig, ServerQueryError, query_server_logs
 from .voice_client import VoiceClient, VoiceStatus
 from .config import settings
@@ -3580,14 +3581,37 @@ class QQMusicQRConfirmRequest(BaseModel):
     auth_url: str
 
 
+def _saved_qqmusic_verification(session: Session, cookie: str) -> dict:
+    row = session.get(Secret, "qqmusic_verification")
+    if row:
+        try:
+            result = json.loads(decrypt_text(row.value))
+            if result.pop("cookie_fingerprint", "") == hashlib.sha256(cookie.encode()).hexdigest():
+                return result
+        except Exception:
+            pass
+    return {"status": "unverified", "message": "尚未验证周杰伦歌曲点播"}
+
+
+def _save_qqmusic_login(session: Session, cookie: str, verification: dict) -> None:
+    result = {**verification, "cookie_fingerprint": hashlib.sha256(cookie.encode()).hexdigest()}
+    for key, value in (("qqmusic_cookie", cookie), ("qqmusic_verification", json.dumps(result, ensure_ascii=False))):
+        row = session.get(Secret, key)
+        if row is None:
+            session.add(Secret(key=key, value=encrypt_text(value)))
+        else:
+            row.value = encrypt_text(value)
+    session.commit()
+
+
 @app.get("/admin/qqmusic/status")
 async def admin_qqmusic_status(request: Request, session: Session = Depends(get_session)) -> dict:
     _require_admin_token(request)
     try:
-        _get_admin_qqmusic_cookie(session)
+        cookie = _get_admin_qqmusic_cookie(session)
     except HTTPException:
         return {"admin_cookie_set": False}
-    return {"admin_cookie_set": True}
+    return {"admin_cookie_set": True, "verification": _saved_qqmusic_verification(session, cookie)}
 
 
 @app.post("/admin/qqmusic/cookie")
@@ -3603,7 +3627,7 @@ async def admin_qqmusic_set_cookie(
     if c.lower().startswith("cookie:"):
         c = c.split(":", 1)[1].strip()
     c = c.replace("\r", "").replace("\n", "")
-    _set_secret(session, "qqmusic_cookie", c)
+    _save_qqmusic_login(session, c, {"status": "unverified", "message": "Cookie 已保存，请验证周杰伦歌曲点播"})
     qqmusic.set_cookie(c)
     return {"ok": True, "admin_cookie_set": True, "uin": qqmusic.get_uin()}
 
@@ -3611,13 +3635,25 @@ async def admin_qqmusic_set_cookie(
 @app.delete("/admin/qqmusic/cookie")
 async def admin_qqmusic_delete_cookie(request: Request, session: Session = Depends(get_session)) -> dict:
     _require_admin_token(request)
-    row = session.get(Secret, "qqmusic_cookie")
-    if row:
-        session.delete(row)
-        session.commit()
+    for key in ("qqmusic_cookie", "qqmusic_verification"):
+        row = session.get(Secret, key)
+        if row:
+            session.delete(row)
+    session.commit()
     qqmusic.set_cookie("")
     qqmusic._session_cookies = {}
     return {"ok": True, "admin_cookie_set": False}
+
+
+@app.post("/admin/qqmusic/verify")
+async def admin_qqmusic_verify(request: Request, session: Session = Depends(get_session)) -> dict:
+    _require_admin_token(request)
+    cookie = _get_admin_qqmusic_cookie(session)
+    client = QQMusicClient()
+    client.set_cookie(cookie)
+    verification = await client.verify_playback()
+    _set_secret(session, "qqmusic_verification", json.dumps({**verification, "cookie_fingerprint": hashlib.sha256(cookie.encode()).hexdigest()}, ensure_ascii=False))
+    return {"verification": verification}
 
 
 @app.post("/admin/qqmusic/qr/confirm")
@@ -3628,22 +3664,29 @@ async def admin_qqmusic_qr_confirm(
 ) -> dict:
     """管理员扫码成功后确认登录，获取并保存最终 cookies"""
     _require_admin_token(request)
+    candidate = QQMusicClient()
+    candidate._session_cookies = dict(getattr(qqmusic, "_session_cookies", {}))
     try:
-        r = await qqmusic.confirm_qr_login(req.auth_url)
+        await candidate.confirm_qr_login(req.auth_url)
+    except QQMusicLoginError as exc:
+        logger.warning("QQ 音乐扫码：%s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from None
     except Exception as exc:
         logger.warning("QQ 音乐扫码：授权回调失败，异常类型 %s", type(exc).__name__)
         raise HTTPException(status_code=502, detail="QQ 音乐扫码授权回调失败，请查看后端日志") from None
-    c = (qqmusic.get_cookie() or "").strip()
+    c = candidate.get_cookie().strip()
+    verification = await candidate.verify_playback()
     if c:
         try:
-            _set_secret(session, "qqmusic_cookie", c)
+            _save_qqmusic_login(session, c, verification)
         except Exception as exc:
             logger.warning("QQ 音乐扫码：保存登录信息失败，异常类型 %s", type(exc).__name__)
             raise HTTPException(status_code=500, detail="保存 QQ 音乐登录信息失败，请查看后端日志") from None
-        logger.info("QQ 音乐扫码：登录信息已保存到数据库，尚未验证有效性")
+        qqmusic.set_cookie(c)
+        logger.info("QQ 音乐扫码：音乐凭据已保存，点播验证=%s", verification["status"])
     else:
         logger.warning("QQ 音乐扫码：未获得登录信息，未保存")
-    return {"ok": True, "admin_cookie_set": bool(c), "uin": qqmusic.get_uin(), "raw": r}
+    return {"ok": True, "admin_cookie_set": bool(c), "verification": verification}
 
 
 @app.post("/qqmusic/login/cookie")
@@ -3668,7 +3711,6 @@ async def qqmusic_login_status() -> dict:
             "logged_in": refresh_result["success"],
             "message": refresh_result["message"],
             "uin": qqmusic.get_uin(),
-            "cookie": qqmusic.get_cookie()
         }
     except Exception as e:
         return {"logged_in": False, "message": str(e)}

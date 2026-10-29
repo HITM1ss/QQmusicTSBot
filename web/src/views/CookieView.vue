@@ -38,12 +38,12 @@
                   <span
                     :class="[
                       'text-xs px-2.5 py-1 rounded-full font-semibold border transition-colors',
-                      qqAdminStatus
+                      qqAdminVerification?.status === 'passed'
                         ? 'bg-green-50 text-green-700 border-green-200'
                         : 'bg-gray-100 text-gray-600 border-gray-200'
                     ]"
                   >
-                    {{ qqAdminStatus ? '已保存' : '未配置' }}
+                    {{ qqAdminVerification?.status === 'passed' ? '点播验证通过' : qqAdminStatus ? '已保存' : '未配置' }}
                   </span>
                 </h2>
                 <p class="text-gray-500 text-sm mt-2">用于服务器端点歌播放（Cookie 加密存储在服务器，不做返回）</p>
@@ -54,7 +54,7 @@
               <div class="flex flex-col md:flex-row gap-8">
                 <div class="flex-1 space-y-6">
                   <div class="flex flex-wrap gap-3">
-                    <button @click="startQQAdminQr" :disabled="qqAdminDeleting || qqAdminQrStarting" class="btn-primary shadow-blue-200">
+                    <button @click="startQQAdminQr" :disabled="qqAdminDeleting || qqAdminQrStarting || qqAdminVerifying || qqAdminAuthorizing" class="btn-primary shadow-blue-200">
                       <QrCode :size="18" />
                       扫码授权
                     </button>
@@ -62,11 +62,16 @@
                       <RefreshCw :size="18" />
                       刷新状态
                     </button>
+                    <button @click="verifyQQAdminCookie" :disabled="!qqAdminStatus || qqAdminVerifying || qqAdminAuthorizing || qqAdminDeleting" class="btn-secondary">
+                      {{ qqAdminVerifying ? '正在验证点播…' : '验证周杰伦点播' }}
+                    </button>
                   </div>
+                  <p v-if="qqAdminVerification?.checked_at" class="text-xs text-gray-500">上次验证：{{ new Date(qqAdminVerification.checked_at * 1000).toLocaleString('zh-CN') }}。结果仅代表该次歌曲测试。</p>
 
-                  <div v-if="qqAdminStatus" class="flex items-center gap-2 text-sm text-green-600 font-medium">
-                    <CheckCircle2 :size="16" />
-                    服务器已保存 Cookie，登录有效性未验证
+                  <div v-if="qqAdminStatus" class="flex items-center gap-2 text-sm font-medium" :class="qqAdminVerification?.status === 'passed' ? 'text-green-600' : 'text-amber-700'">
+                    <CheckCircle2 v-if="qqAdminVerification?.status === 'passed'" :size="16" class="flex-shrink-0" />
+                    <AlertCircle v-else :size="16" class="flex-shrink-0" />
+                    {{ qqAdminVerification?.message || '尚未验证周杰伦歌曲点播' }}
                   </div>
                 </div>
 
@@ -95,7 +100,7 @@
                     placeholder="输入 Cookie 字符串 (uin=...; p_skey=... 等)"
                     class="input-field flex-1 font-mono text-sm"
                   />
-                  <button @click="setQQAdminCookie" :disabled="qqAdminDeleting || qqAdminSaving" class="btn-secondary whitespace-nowrap font-medium">
+                  <button @click="setQQAdminCookie" :disabled="qqAdminDeleting || qqAdminSaving || qqAdminAuthorizing || qqAdminVerifying" class="btn-secondary whitespace-nowrap font-medium">
                     保存配置
                   </button>
                 </div>
@@ -103,7 +108,7 @@
                   <AlertCircle :size="12" />
                   QQ音乐获取播放链接通常需要登录态 cookie。
                 </p>
-                <button @click="deleteQQAdminCookie" :disabled="qqAdminDeleting || qqAdminSaving || qqAdminQrStarting" class="btn-secondary mt-4 text-red-600">
+                <button @click="deleteQQAdminCookie" :disabled="qqAdminDeleting || qqAdminSaving || qqAdminQrStarting || qqAdminVerifying" class="btn-secondary mt-4 text-red-600">
                   {{ qqAdminDeleting ? '正在删除…' : '删除已保存的登录' }}
                 </button>
               </div>
@@ -146,6 +151,10 @@ const qqAdminManualCookie = ref('')
 const qqAdminDeleting = ref(false)
 const qqAdminSaving = ref(false)
 const qqAdminQrStarting = ref(false)
+const qqAdminAuthorizing = ref(false)
+const qqAdminVerifying = ref(false)
+interface PlaybackVerification { status: 'unverified' | 'passed' | 'failed' | 'error'; message: string; song?: string; checked_at?: number }
+const qqAdminVerification = ref<PlaybackVerification | null>(null)
 
 const status = ref('')
 
@@ -159,10 +168,12 @@ function getAdminHeaders(): Record<string, string> {
 async function load() {
   status.value = ''
   try {
-    const qst = await apiGet<{ admin_cookie_set: boolean }>('/admin/qqmusic/status', getAdminHeaders())
+    const qst = await apiGet<{ admin_cookie_set: boolean; verification?: PlaybackVerification }>('/admin/qqmusic/status', getAdminHeaders())
     qqAdminStatus.value = !!qst?.admin_cookie_set
+    qqAdminVerification.value = qst?.verification || null
   } catch {
     qqAdminStatus.value = false
+    qqAdminVerification.value = null
   }
 
 }
@@ -186,6 +197,7 @@ async function startQQAdminQr() {
 
     status.value = '请使用手机 QQ 扫描二维码'
     qqAdminTimer = window.setInterval(() => {
+      if (qqAdminChecks.size) return
       const check = checkQQAdminQr()
       qqAdminChecks.add(check)
       void check.finally(() => qqAdminChecks.delete(check))
@@ -221,20 +233,40 @@ async function checkQQAdminQr() {
       return
     }
     if (st === 'success') {
+      stopQQAdminPoll()
+      qqAdminAuthorizing.value = true
       const authUrl = String(r?.auth_url || '')
       if (!authUrl) throw new Error('authorized but auth_url is empty')
 
       qqAdminAuthUrl.value = authUrl
-      await apiPost<any>('/admin/qqmusic/qr/confirm', { auth_url: authUrl }, getAdminHeaders())
-      status.value = 'qqmusic admin authorized (cookie saved server-side)'
-      stopQQAdminPoll()
-      await load()
+      status.value = '正在获取音乐凭据并验证周杰伦歌曲点播…'
+      const result = await apiPost<{ admin_cookie_set: boolean; verification: PlaybackVerification }>('/admin/qqmusic/qr/confirm', { auth_url: authUrl }, getAdminHeaders())
+      qqAdminStatus.value = result.admin_cookie_set
+      qqAdminVerification.value = result.verification
+      status.value = result.verification.message
+      qqAdminQrImg.value = ''
       return
     }
 
     status.value = st === 'error' ? String(r?.message || '检查二维码状态失败') : `qqmusic qr unknown: status=${st}`
   } catch (e: any) {
     status.value = String(e?.message ?? e)
+  } finally {
+    qqAdminAuthorizing.value = false
+  }
+}
+
+async function verifyQQAdminCookie() {
+  qqAdminVerifying.value = true
+  status.value = '正在验证周杰伦歌曲的标准播放地址…'
+  try {
+    const result = await apiPost<{ verification: PlaybackVerification }>('/admin/qqmusic/verify', {}, getAdminHeaders())
+    qqAdminVerification.value = result.verification
+    status.value = result.verification.message
+  } catch (e: any) {
+    status.value = String(e?.message ?? e)
+  } finally {
+    qqAdminVerifying.value = false
   }
 }
 
@@ -265,6 +297,7 @@ async function deleteQQAdminCookie() {
     await apiDelete('/admin/qqmusic/cookie', getAdminHeaders())
     qqAdminManualCookie.value = ''
     qqAdminStatus.value = false
+    qqAdminVerification.value = null
     status.value = '已删除保存的 QQ 音乐登录信息'
   } catch (e: any) {
     status.value = String(e?.message ?? e)

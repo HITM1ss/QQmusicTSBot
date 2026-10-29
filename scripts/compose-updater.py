@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -15,6 +16,51 @@ import time
 
 SERVICES = ("voice-service", "backend", "web")
 IMAGE_PREFIX = "ghcr.io/hitm1ss/qqmusictsbot"
+
+
+def systemd_unit_contents(project: Path, name: str, worker_path: Path, config_path: Path) -> tuple[str, str]:
+    unit = f"tsbot-updater-{name}"
+    service = f'''[Unit]
+Description=TSBot Compose updater ({name})
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {worker_path} {config_path}
+ExecStopPost=/usr/bin/python3 {worker_path} {config_path} --finalize
+TimeoutStartSec=20min
+UMask=0077
+'''
+    path = f'''[Unit]
+Description=Watch TSBot update requests ({name})
+
+[Path]
+PathExists={project / 'data/updater/request.json'}
+Unit={unit}.service
+
+[Install]
+WantedBy=multi-user.target
+'''
+    return service, path
+
+
+def activate_systemd_updater(worker, unit: str, units: Path) -> None:
+    marker = worker.directory / "installed"
+    marker.unlink(missing_ok=True)
+    worker.status("installing", "正在安装宿主机更新服务")
+    try:
+        if shutil.which("systemd-analyze"):
+            subprocess.run(["systemd-analyze", "verify", str(units / f"{unit}.service"), str(units / f"{unit}.path")], check=True)
+        subprocess.run(["systemctl", "daemon-reload"], check=True)
+        subprocess.run(["systemctl", "enable", "--now", f"{unit}.path"], check=True)
+        subprocess.run(["systemctl", "is-active", "--quiet", f"{unit}.path"], check=True)
+        worker.status("idle", "更新服务已启用")
+        atomic_write(marker, unit + "\n", 0o644)
+    except (subprocess.CalledProcessError, OSError):
+        marker.unlink(missing_ok=True)
+        worker.status("install_failed", f"更新服务安装或启动失败，请查看 {unit}.path 的 systemd 日志后重新安装")
+        raise
 
 
 def version_tuple(value: str) -> tuple[int, ...]:

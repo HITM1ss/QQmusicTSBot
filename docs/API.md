@@ -861,10 +861,13 @@ curl -X POST "http://127.0.0.1:8009/external/queue" \
 
 | 方法 | 路径 | 是否需要 admin token | 说明 |
 | --- | --- | --- | --- |
-| `GET` | `/admin/qqmusic/status` | 是 | 是否已保存管理员 QQ 音乐 cookie |
+| `GET` | `/admin/qqmusic/status` | 是 | 是否已保存管理员 QQ 音乐 cookie，以及该凭据上一次的点播验证结果 |
 | `POST` | `/admin/qqmusic/cookie` | 是 | 写入管理员 QQ 音乐 cookie |
 | `DELETE` | `/admin/qqmusic/cookie` | 是 | 删除已保存的 QQ 音乐登录信息并清除客户端状态 |
 | `POST` | `/admin/qqmusic/qr/confirm` | 是 | 将扫码授权后的 `auth_url` 换成最终 cookie 并保存 |
+| `POST` | `/admin/qqmusic/verify` | 是 | 搜索周杰伦歌曲，检查标准播放地址并读取少量音频，不加入队列 |
+
+扫码确认会先完成 QQ 回调、OAuth 和 QQ 音乐凭据交换，再自动进行点播验证。未取得完整音乐凭据时不会覆盖旧登录；已取得凭据但因会员、版权、地区或网络导致点播未通过时，保留凭据并显示实际验证结果。`verification` 包含 `status`（`passed`、`failed`、`error` 或 `unverified`）、`message`、可选 `song`、`checked_at`（Unix 秒）。验证结果与已保存 Cookie 绑定，刷新页面仍可查看；更换 Cookie 后旧结果不再生效。试听不算通过，成功只代表该次歌曲测试，不保证其他歌曲或 TeamSpeak 音频输出成功。
 
 `POST /admin/qqmusic/cookie` 请求体：
 
@@ -878,7 +881,7 @@ curl -X POST "http://127.0.0.1:8009/external/queue" \
 
 ```json
 {
-  "auth_url": "https://graph.qq.com/..."
+  "auth_url": "https://ssl.ptlogin2.graph.qq.com/check_sig?uin=...&ptsigx=..."
 }
 ```
 

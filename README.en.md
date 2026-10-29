@@ -77,6 +77,9 @@ Playback URLs and user playlists normally require a valid QQ Music login state. 
 - POST /admin/qqmusic/cookie
 - DELETE /admin/qqmusic/cookie
 - POST /admin/qqmusic/qr/confirm
+- POST /admin/qqmusic/verify (probe a Jay Chou track; previews do not pass)
+
+QR confirmation exchanges QQ authorization for QQ Music credentials, then checks a standard playback URL and a small audio fragment. The result and time are shown in settings; a successful probe applies to that track at that time and does not prove every VIP track is available.
 
 In TeamSpeak chat, `点歌 <song_mid|keywords>` places the matched QQ Music song next in the queue without interrupting the current track. Use `add` to append normally.
 

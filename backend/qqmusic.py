@@ -5,8 +5,14 @@ import base64
 from http.cookies import SimpleCookie
 import json
 import time
+import uuid
+from urllib.parse import parse_qs, urljoin, urlsplit
 import httpx
 from .logger import logger
+
+
+class QQMusicLoginError(RuntimeError):
+    """A login-stage error whose message is safe to display and log."""
 
 
 class QQMusicClient:
@@ -41,7 +47,7 @@ class QQMusicClient:
 
         self._uin = ""
         uin_val = ""
-        for k in ("uin", "p_uin", "wxuin"):
+        for k in ("qqmusic_uin", "qm_str_musicid", "musicid", "uin", "p_uin", "wxuin"):
             if k in jar and jar[k].value:
                 uin_val = jar[k].value.strip()
                 break
@@ -90,6 +96,14 @@ class QQMusicClient:
             r.raise_for_status()
             return r.json()
 
+    def _music_key(self) -> str:
+        jar = SimpleCookie()
+        try:
+            jar.load(self._cookie)
+        except Exception:
+            return ""
+        return next((jar[name].value for name in ("qm_keyst", "qqmusic_key", "musickey") if name in jar and jar[name].value), "")
+
     async def get_music_url(self, songmid: str, quality: str = "320") -> dict[str, Any]:
         """
         获取音乐 URL
@@ -104,13 +118,20 @@ class QQMusicClient:
         # 使用真实的 uin，如果没有则使用 "0"
         uin = self._uin or "0"
         g_tk = self._get_gtk()
+        music_key = self._music_key()
+        detail = await self._post("https://u.y.qq.com/cgi-bin/musicu.fcg", json.dumps({
+            "comm": {"ct": 24, "cv": 4747474},
+            "detail": {"module": "music.pf_song_detail_svr", "method": "get_song_detail_yqq", "param": {"song_mid": songmid}},
+        }))
+        track = detail.get("detail", {}).get("data", {}).get("track_info", {})
+        media_mid = track.get("file", {}).get("media_mid") or songmid
         
         body = {
             "req_1": {
-                "module": "vkey.GetVkeyServer",
-                "method": "CgiGetVkey",
+                "module": "music.vkey.GetVkey",
+                "method": "UrlGetVkey",
                 "param": {
-                    "filename": [f"{prefix}{songmid}{songmid}.{suffix}"],
+                    "filename": [f"{prefix}{media_mid}.{suffix}"],
                     "guid": "10000",
                     "songmid": [songmid],
                     "songtype": [0],
@@ -124,8 +145,12 @@ class QQMusicClient:
                 "uin": uin,
                 "format": "json",
                 "ct": 24,
-                "cv": 0,
-                "g_tk": g_tk
+                "cv": 4747474,
+                "platform": "yqq.json",
+                "g_tk": g_tk,
+                "g_tk_new_20200303": g_tk,
+                "authst": music_key,
+                "tmeLoginType": 1 if music_key.startswith("W_X") else 2,
             }
         }
         
@@ -394,37 +419,32 @@ class QQMusicClient:
         """获取音乐播放 URL（简化版）"""
         try:
             data = await self.get_music_url(songmid, quality)
-            print(f"[DEBUG] QQ Music get_music_url response for {songmid}: {data}")
             
             req_data = data.get("req_1", {}).get("data", {})
             sip = req_data.get("sip", [])
             midurlinfo = req_data.get("midurlinfo", [])
             
-            print(f"[DEBUG] sip: {sip}")
-            print(f"[DEBUG] midurlinfo: {midurlinfo}")
             
             if sip and midurlinfo:
                 midurl_item = midurlinfo[0]
                 
                 # 优先使用完整播放链接
                 if midurl_item.get("purl"):
-                    url = sip[0] + midurl_item["purl"]
-                    print(f"[DEBUG] Generated full URL: {url}")
+                    url = urljoin(sip[0], midurl_item["purl"])
                     return url
                 
                 # 如果没有完整链接，尝试试听链接
                 if midurl_item.get("opi30surl"):
-                    print(f"[DEBUG] Using 30s preview URL: {midurl_item['opi30surl']}")
+                    logger.info("QQ 音乐播放：仅取得试听地址")
                     return midurl_item["opi30surl"]
                 
                 # 检查其他可用的链接
                 for key in ["opi48kurl", "opi96kurl", "opi128kurl", "opi192kurl"]:
                     if midurl_item.get(key):
-                        print(f"[DEBUG] Using {key}: {midurl_item[key]}")
                         return midurl_item[key]
                 
                 result_code = midurl_item.get('result')
-                print(f"[DEBUG] Result code: {result_code}, No playable URLs found")
+                logger.info("QQ 音乐播放：未取得地址，结果码=%s", result_code)
                 
                 # 根据错误码提供更具体的错误信息
                 if result_code == 104003:
@@ -432,11 +452,66 @@ class QQMusicClient:
                 elif result_code:
                     raise Exception(f"无法获取播放链接，错误码: {result_code}")
             
-            print(f"[DEBUG] Failed to get URL - sip empty: {not sip}, midurlinfo empty: {not midurlinfo}")
             return None
         except Exception as e:
-            print(f"[DEBUG] Exception in get_music_url_simple: {e}")
+            logger.warning("QQ 音乐播放：请求失败，异常类型=%s", type(e).__name__)
             return None
+
+    async def verify_playback(self) -> dict[str, Any]:
+        """Verify one Jay Chou track without adding it to the queue or downloading the song."""
+        checked_at = int(time.time())
+        song_name = ""
+        stage = "credentials"
+        try:
+            if not self._uin or not self._music_key():
+                return {"status": "failed", "message": "未取得完整 QQ 音乐账号和音乐密钥，请重新扫码授权", "checked_at": checked_at}
+            stage = "search"
+            search = await self.search_with_keyword("周杰伦 晴天", result_num=10)
+            songs = search.get("req", {}).get("data", {}).get("body", {}).get("song", {}).get("list", [])
+            songs = [song for song in songs if song.get("mid") and any(singer.get("name") == "周杰伦" for singer in song.get("singer", []))]
+            if not songs:
+                raise QQMusicLoginError("未搜索到周杰伦歌曲，无法完成点播验证")
+            song = next((song for song in songs if song.get("pay", {}).get("pay_play") == 1), songs[0])
+            song_name = str(song.get("name") or "测试歌曲")
+            stage = "vkey"
+            raw = await self.get_music_url(song["mid"], "320")
+            module = raw.get("req_1", {})
+            data = module.get("data", {})
+            items = data.get("midurlinfo", [])
+            item = items[0] if items else {}
+            code = item.get("result", module.get("code", raw.get("code")))
+            logger.info("QQ 音乐点播验证：标准地址=%s，结果码=%s", bool(item.get("purl")), code)
+            if raw.get("code", 0) != 0 or module.get("code", 0) != 0 or item.get("result", 0) not in (0, "0") or not item.get("purl"):
+                return {"status": "failed", "song": song_name, "checked_at": checked_at,
+                        "message": f"周杰伦《{song_name}》未取得标准播放地址；可能涉及登录、会员权限、版权或地区限制，试听不算通过"}
+            url = urljoin((data.get("sip") or [""])[0], item["purl"])
+            parsed = urlsplit(url)
+            if parsed.scheme not in {"https", "http"} or not (parsed.hostname or "").endswith(".qq.com"):
+                raise QQMusicLoginError("播放接口未返回可验证的 QQ 音乐 CDN 地址")
+            url = parsed._replace(scheme="https").geturl()
+            stage = "cdn"
+            async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+                async with client.stream("GET", url, headers={"Range": "bytes=0-1023", "Referer": "https://y.qq.com/"}) as response:
+                    logger.info("QQ 音乐点播验证：CDN HTTP %s", response.status_code)
+                    if response.status_code not in (200, 206):
+                        raise QQMusicLoginError(f"已取得播放地址，但音频读取失败（HTTP {response.status_code}）")
+                    sample = b""
+                    async for chunk in response.aiter_bytes():
+                        sample += chunk[:1024 - len(sample)]
+                        if len(sample) >= 32:
+                            break
+                    if not sample or not (sample.startswith((b"ID3", b"fLaC")) or (len(sample) >= 2 and sample[0] == 255 and sample[1] & 224 == 224) or b"ftyp" in sample[:32]):
+                        raise QQMusicLoginError("播放地址返回的内容未识别为音频，验证未通过")
+            logger.info("QQ 音乐点播验证：通过，已读取标准播放地址的音频片段")
+            return {"status": "passed", "song": song_name, "checked_at": checked_at,
+                    "message": f"周杰伦《{song_name}》标准播放地址可读取，点播授权验证通过"}
+        except QQMusicLoginError as exc:
+            logger.warning("QQ 音乐点播验证：阶段=%s，%s", stage, exc)
+            return {"status": "failed", "song": song_name, "checked_at": checked_at, "message": str(exc)}
+        except Exception as exc:
+            logger.warning("QQ 音乐点播验证：阶段=%s，异常类型=%s", stage, type(exc).__name__)
+            return {"status": "error", "song": song_name, "checked_at": checked_at,
+                    "message": "点播验证请求失败，请检查服务器网络并查看验证日志；暂时无法判断登录有效性"}
 
     async def get_song_list_simple(self, category_id: str) -> list[dict[str, Any]]:
         """获取歌单歌曲信息（简化版）"""
@@ -604,53 +679,77 @@ class QQMusicClient:
     def _merge_response_cookies_into_session(self, cookies: httpx.Cookies) -> None:
         if not hasattr(self, "_session_cookies") or not isinstance(self._session_cookies, dict):
             self._session_cookies = {}
-        for k, v in cookies.items():
-            self._session_cookies[k] = v
+        for item in cookies.jar:
+            self._session_cookies[item.name] = item.value
 
     async def confirm_qr_login(self, auth_url: str) -> dict[str, Any]:
-        """扫码成功后，访问 auth_url 让 QQ 写入最终 cookies，并保存到 client cookie 中。"""
-        if not auth_url:
-            raise Exception("auth_url 不能为空")
+        """将已确认的 QQ 扫码会话换成音乐凭据，完整取得后再替换登录态。"""
+        parsed = urlsplit(auth_url)
+        if parsed.scheme != "https" or parsed.hostname not in {"ssl.ptlogin2.graph.qq.com", "ssl.ptlogin2.qq.com"} or parsed.path != "/check_sig":
+            raise QQMusicLoginError("QQ 授权回调地址无效，请重新扫码")
+        query = parse_qs(parsed.query)
+        uin = query.get("uin", [""])[0]
+        sig = query.get("ptsigx", [""])[0]
+        if not uin.isdigit() or not sig:
+            raise QQMusicLoginError("QQ 授权回调缺少必要参数，请重新扫码")
+        cookies = dict(getattr(self, "_session_cookies", {}))
+        def cookie_header() -> str:
+            return "; ".join(f"{key}={value}" for key, value in cookies.items())
 
-        headers = {
-            "User-Agent": self._base_headers.get("User-Agent", ""),
-            "Referer": "https://xui.ptlogin2.qq.com/",
-        }
-        cookie_header = self._cookie_header_from_session()
-        if cookie_header:
-            headers["Cookie"] = cookie_header
+        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+            callback = await client.get("https://ssl.ptlogin2.graph.qq.com/check_sig", params={
+                "uin": uin, "ptsigx": sig, "pttype": "1", "service": "ptqrlogin", "nodirect": "0",
+                "s_url": "https://graph.qq.com/oauth2.0/login_jump", "ptlang": "2052", "ptredirect": "100",
+                "aid": "716027609", "daid": "383", "pt_3rd_aid": "100497308",
+                "j_later": "0", "low_login_hour": "0", "regmaster": "0", "pt_login_type": "3",
+                "pt_aid": "0", "pt_aaid": "16", "pt_light": "0",
+            }, headers={"User-Agent": self._base_headers["User-Agent"], "Referer": "https://xui.ptlogin2.qq.com/", "Cookie": cookie_header()})
+            logger.info("QQ 音乐扫码：QQ 授权回调 HTTP %s", callback.status_code)
+            if not 200 <= callback.status_code < 400:
+                raise QQMusicLoginError("QQ 授权回调失败，请重新扫码")
+            for item in callback.cookies.jar:
+                cookies[item.name] = item.value
+            if not cookies.get("p_skey"):
+                raise QQMusicLoginError("QQ 授权未取得 p_skey，无法继续登录音乐服务")
+            authorization = await client.post("https://graph.qq.com/oauth2.0/authorize", data={
+                "response_type": "code", "client_id": "100497308",
+                "redirect_uri": "https://y.qq.com/portal/wx_redirect.html?login_type=1&surl=https://y.qq.com/",
+                "scope": "get_user_info,get_app_friends", "state": "state", "switch": "",
+                "from_ptlogin": "1", "src": "1", "update_auth": "1", "openapi": "1010_1030",
+                "g_tk": self._hash33(cookies["p_skey"], 5381), "auth_time": str(int(time.time() * 1000)),
+                "ui": str(uuid.uuid4()).upper(),
+            }, headers={"User-Agent": self._base_headers["User-Agent"], "Referer": "https://graph.qq.com/oauth2.0/login_jump", "Origin": "https://graph.qq.com", "Cookie": cookie_header()})
+            code = parse_qs(urlsplit(authorization.headers.get("location", "")).query).get("code", [""])[0]
+            logger.info("QQ 音乐扫码：OAuth HTTP %s，有授权码=%s", authorization.status_code, bool(code))
+            if not authorization.is_redirect or not code:
+                raise QQMusicLoginError("QQ OAuth 授权未返回授权码，请重新扫码")
+            music = await client.post("https://u.y.qq.com/cgi-bin/musicu.fcg", json={
+                "comm": {"ct": 24, "cv": 4747474, "platform": "yqq.json", "uin": "0", "g_tk": 5381, "tmeLoginType": 2},
+                "req_0": {"module": "QQConnectLogin.LoginServer", "method": "QQLogin", "param": {"code": code}},
+            }, headers={"User-Agent": self._base_headers["User-Agent"], "Referer": "https://y.qq.com/", "Origin": "https://y.qq.com", "Cookie": cookie_header()})
+            logger.info("QQ 音乐扫码：音乐凭据交换 HTTP %s", music.status_code)
+            music.raise_for_status()
+            result = music.json()
+            item = result.get("req_0", {})
+            data = item.get("data", {})
+            logger.info("QQ 音乐扫码：音乐凭据交换结果 code=%s，业务 code=%s", item.get("code"), data.get("code"))
+            if result.get("code", 0) != 0 or item.get("code") != 0 or data.get("code", 0) != 0:
+                raise QQMusicLoginError("QQ 音乐拒绝凭据交换，请查看扫码日志中的结果码")
+            credential = data.get("data", data)
+            musicid = str(credential.get("str_musicid") or credential.get("musicid") or "")
+            musickey = credential.get("musickey") or credential.get("musicKey") or credential.get("qm_keyst")
+            if not musicid.isdigit() or not musickey:
+                raise QQMusicLoginError("QQ 音乐返回的音乐账号或密钥不完整，未保存登录")
 
-        async with httpx.AsyncClient(timeout=15, headers=headers, follow_redirects=False) as client:
-            r = await client.get(auth_url)
-            # 不强制 2xx：有些情况下会 302 / 3xx
-            self._merge_response_cookies_into_session(r.cookies)
-            logger.info("QQ 音乐扫码：授权回调 HTTP %s，响应携带 Cookie=%s，重定向=%s", r.status_code, bool(r.cookies), r.is_redirect)
+        # Only music credentials are persisted; QR signatures and OAuth codes stay transient.
+        self.set_cookie({"uin": musicid, "qqmusic_uin": musicid, "qm_str_musicid": musicid, "musicid": musicid,
+                         "qm_keyst": musickey, "qqmusic_key": musickey, "musickey": musickey, "tmeLoginType": "2"})
+        logger.info("QQ 音乐扫码：已取得完整音乐凭据")
+        return {"ok": True, "uin": self.get_uin()}
 
-        # 将 session cookies 写入通用 cookie（供后续 musicu 请求使用）
-        final_cookie = self._cookie_header_from_session()
-        if final_cookie:
-            self.set_cookie(final_cookie)
-
-        # 访问 QQ 音乐页面来获取完整的音乐服务 cookie（包括 VIP 认证）
-        try:
-            await self._fetch_qqmusic_cookies()
-        except Exception as e:
-            logger.warning("QQ 音乐扫码：获取音乐登录信息失败，异常类型 %s", type(e).__name__)
-
-        names = {part.split("=", 1)[0].strip().lower() for part in self._cookie.split(";") if "=" in part}
-        has_music_key = bool(names & {"qm_keyst", "qqmusic_key", "musickey"})
-        logger.info("QQ 音乐扫码：登录信息检查，有账号标识=%s，有音乐密钥=%s（未验证有效性）", bool(self._uin), has_music_key)
-        if not has_music_key:
-            logger.warning("QQ 音乐扫码：未获取到音乐密钥，保存 Cookie 不代表音乐会员登录成功")
-
-        return {
-            "ok": True,
-            "uin": self.get_uin(),
-        }
-
-    def _hash33(self, t: str) -> str:
+    def _hash33(self, t: str, seed: int = 0) -> str:
         """计算 ptqrtoken"""
-        e = 0
+        e = seed
         for i in range(len(t)):
             e += (e << 5) + ord(t[i])
         return str(e & 2147483647)
@@ -688,6 +787,7 @@ class QQMusicClient:
         try:
             async with httpx.AsyncClient(timeout=10, headers=headers) as client:
                 response = await client.get(url, params=params)
+                self._merge_response_cookies_into_session(response.cookies)
                 response_text = response.text
 
                 import re
@@ -735,19 +835,6 @@ class QQMusicClient:
         except Exception as e:
             logger.warning("QQ 音乐扫码：状态查询失败，异常类型 %s", type(e).__name__)
             return {"status": "error", "message": f"检查登录状态失败: {str(e)}"}
-
-    async def _authorize_qq_qr(self, uin: str, sigx: str) -> dict[str, Any]:
-        """使用QQ登录授权信息获取QQ音乐cookies"""
-        try:
-            # 这里应该实现获取QQ音乐cookies的逻辑
-            # 由于涉及复杂的OAuth流程，暂时返回基本信息
-            return {
-                "uin": uin,
-                "sigx": sigx,
-                "message": "获取授权信息成功"
-            }
-        except Exception as e:
-            raise Exception(f"授权失败: {str(e)}")
 
     async def refresh_login(self) -> dict[str, Any]:
         """刷新登录状态"""
@@ -817,6 +904,10 @@ class QQMusicClient:
         if not self._cookie:
             return "0"
 
+        music_key = self._music_key()
+        if music_key:
+            return self._hash33(music_key, 5381)
+
         jar = SimpleCookie()
         try:
             jar.load(self._cookie)
@@ -835,38 +926,3 @@ class QQMusicClient:
             gtk += (gtk << 5) + ord(char)
         
         return str(gtk & 2147483647)
-
-    async def _fetch_qqmusic_cookies(self) -> None:
-        """访问 QQ 音乐页面获取完整的音乐服务 cookie（包括 VIP 认证）"""
-        # QQ 音乐主页和关键页面，用于触发 VIP cookie 设置
-        urls_to_visit = [
-            "https://y.qq.com/",
-            "https://y.qq.com/n/ryqq/profile",
-            "https://u.y.qq.com/cgi-bin/musicu.fcg"
-        ]
-        
-        headers = {
-            "User-Agent": self._base_headers.get("User-Agent", ""),
-            "Referer": "https://y.qq.com/",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        }
-        
-        cookie_header = self._cookie_header_from_session()
-        if cookie_header:
-            headers["Cookie"] = cookie_header
-        
-        async with httpx.AsyncClient(timeout=15, headers=headers, follow_redirects=True) as client:
-            for index, url in enumerate(urls_to_visit, start=1):
-                try:
-                    r = await client.get(url)
-                    self._merge_response_cookies_into_session(r.cookies)
-                    logger.info("QQ 音乐扫码：音乐页面 %s 响应 HTTP %s，携带 Cookie=%s", index, r.status_code, bool(r.cookies))
-                    
-                except Exception as e:
-                    logger.warning("QQ 音乐扫码：音乐页面 %s 请求失败，异常类型 %s", index, type(e).__name__)
-                    continue
-        
-        # 更新最终的 cookie
-        final_cookie = self._cookie_header_from_session()
-        if final_cookie:
-            self.set_cookie(final_cookie)

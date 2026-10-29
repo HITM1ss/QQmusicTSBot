@@ -21,10 +21,8 @@ docker compose version >/dev/null
 python3 - "$project_dir" "$project_name" <<'PY'
 import importlib.util
 import json
-import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 
 project = Path(sys.argv[1])
@@ -54,31 +52,9 @@ shutil.copyfile(project / 'scripts/compose-updater.py', worker_path)
 worker_path.chmod(0o644)
 unit = f'tsbot-updater-{name}'
 units = Path('/etc/systemd/system')
-(units / f'{unit}.service').write_text(f'''[Unit]
-Description=TSBot Compose updater ({name})
-After=docker.service
-Requires=docker.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/python3 {worker_path} {config_path}
-ExecStopPost=/usr/bin/python3 {worker_path} {config_path} --finalize
-TimeoutStartSec=20min
-UMask=0077
-''')
-(units / f'{unit}.path').write_text(f'''[Unit]
-Description=Watch TSBot update requests ({name})
-
-[Path]
-PathExists="{state_dir}/request.json"
-Unit={unit}.service
-
-[Install]
-WantedBy=multi-user.target
-''')
-subprocess.run(['systemctl', 'daemon-reload'], check=True)
-subprocess.run(['systemctl', 'enable', '--now', f'{unit}.path'], check=True)
-worker.status('idle', '更新服务已启用')
-module.atomic_write(state_dir / 'installed', unit + '\n', 0o644)
+service_content, path_content = module.systemd_unit_contents(project, name, worker_path, config_path)
+(units / f'{unit}.service').write_text(service_content)
+(units / f'{unit}.path').write_text(path_content)
+module.activate_systemd_updater(worker, unit, units)
 print(f'更新服务已安装。查看日志：journalctl -u {unit}.service')
 PY
