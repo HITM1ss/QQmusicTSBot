@@ -56,6 +56,8 @@ from .serverquery import ServerQueryConfig, ServerQueryError, query_server_logs
 from .voice_client import VoiceClient, VoiceStatus
 from .config import settings
 from .logger import logger
+from .version import build_info, latest_release, parse_version
+from .updates import submit_update, update_status
 
 app = FastAPI(title="tsbot-backend")
 
@@ -2567,6 +2569,62 @@ def public_config() -> dict:
         "app_icon": icon.public_path if asset_path(icon).is_file() else "",
         "log_level": settings.web_log_level,
     }
+
+
+@app.get("/admin/version")
+def admin_version(request: Request) -> dict:
+    _require_admin_token(request)
+    return build_info()
+
+
+@app.get("/admin/update/check")
+async def admin_check_update(request: Request) -> dict:
+    _require_admin_token(request)
+    try:
+        latest = await latest_release()
+    except Exception as exc:
+        logger.warning("检查更新失败，异常类型 %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="检查更新失败，请检查服务器网络后重试") from None
+    current = build_info()
+    current_version = parse_version(current["version"])
+    latest_version = parse_version(latest["version"])
+    return {"current": current, "latest": latest, "update_available": current_version < latest_version if current_version and latest_version else None}
+
+
+@app.get("/admin/update/status")
+def admin_update_status(request: Request) -> dict:
+    _require_admin_token(request)
+    return update_status()
+
+
+class SoftwareUpdateRequest(BaseModel):
+    version: str
+
+
+@app.post("/admin/update")
+async def admin_start_update(req: SoftwareUpdateRequest, request: Request) -> dict:
+    _require_admin_token(request)
+    if not update_status()["available"]:
+        raise HTTPException(status_code=409, detail="宿主机更新服务尚未安装")
+    try:
+        release = await latest_release()
+    except Exception as exc:
+        logger.warning("启动更新前检查版本失败，异常类型 %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="无法检查最新版本，请稍后重试") from None
+    current = parse_version(build_info()["version"])
+    target = parse_version(release["version"])
+    if req.version != release["version"]:
+        raise HTTPException(status_code=409, detail="最新版本已变化，请重新检查更新")
+    if current is None or target is None or target <= current:
+        raise HTTPException(status_code=409, detail="当前版本无法比较或已是最新版本")
+    try:
+        submit_update(release["version"])
+    except (FileExistsError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except OSError as exc:
+        logger.warning("提交更新请求失败，异常类型 %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="无法提交更新请求，请检查宿主机更新服务") from None
+    return {"ok": True, "version": release["version"]}
 
 
 @app.get("/assets/{asset_key}")

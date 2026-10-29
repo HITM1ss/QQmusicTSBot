@@ -844,6 +844,21 @@ curl -X POST "http://127.0.0.1:8009/external/queue" \
 
 ### 11.2 QQ 音乐管理员接口
 
+#### 软件版本与更新
+
+以下接口均需要管理员会话，POST 还需要 `X-CSRF-Token`：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/admin/version` | 后端构建版本和提交号 |
+| `GET` | `/admin/update/check` | 查询最新稳定 Release，比较后端版本 |
+| `GET` | `/admin/update/status` | 宿主机更新服务的可用性和持久化进度 |
+| `POST` | `/admin/update` | 提交已检查的版本，JSON 为 `{"version":"vX.Y.Z"}` |
+
+前端版本来自独立构建产物，不通过后端推测。开发版、降级、重复请求、未启用宿主机服务或最新 Release 已变化时，不会提交更新。宿主机安装和恢复见 [UPDATING.md](UPDATING.md)。
+
+#### QQ 音乐登录管理
+
 | 方法 | 路径 | 是否需要 admin token | 说明 |
 | --- | --- | --- | --- |
 | `GET` | `/admin/qqmusic/status` | 是 | 是否已保存管理员 QQ 音乐 cookie |

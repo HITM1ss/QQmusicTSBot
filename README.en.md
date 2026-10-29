@@ -69,6 +69,8 @@ When a push to `main` or `master` matches the publishing paths, Docker Publish b
 
 ## QQ Music Authorization
 
+The **Version & updates** settings page displays frontend/backend build versions and checks stable releases. Linux/systemd hosts using this repository's GHCR prebuilt Compose deployment can enable one-click updates after installing the host updater. See [update setup and recovery](docs/UPDATING.md).
+
 Playback URLs and user playlists normally require a valid QQ Music login state. Administrators can scan a QR code in the Web console or use:
 
 - GET /admin/qqmusic/status

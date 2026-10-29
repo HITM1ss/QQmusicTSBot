@@ -7,6 +7,7 @@ import { logout } from '../auth'
 import { appConfig, loadAppBranding } from '../appConfig'
 import FloatingToast from '../components/FloatingToast.vue'
 import CookieView from './CookieView.vue'
+import UpdatePanel from '../components/UpdatePanel.vue'
 
 interface SettingField {
   key: string
@@ -65,6 +66,7 @@ const GROUPS = [
   ['serverquery', 'ServerQuery 兼容'],
   ['access', '外部 api'],
   ['logs', '日志'],
+  ['updates', '版本与更新'],
 ] as const
 
 const GROUP_ALIASES: Record<string, string> = {
@@ -320,7 +322,7 @@ onBeforeUnmount(() => {
         <p class="text-sm text-gray-500 mt-1">运行配置与服务连接</p>
       </div>
       <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
-        <template v-if="activeGroup !== 'authorization' && activeGroup !== 'logs'">
+        <template v-if="!['authorization', 'logs', 'updates'].includes(activeGroup)">
           <button class="btn-secondary settings-header-action" type="button" :disabled="loading || saving || applying" @click="saveConfig">
             <Save :size="17" />
             {{ saving ? '正在保存' : '保存配置' }}
@@ -412,6 +414,7 @@ onBeforeUnmount(() => {
             </section>
 
             <CookieView v-if="activeGroup === 'authorization'" embedded />
+            <UpdatePanel v-if="activeGroup === 'updates'" />
 
             <section v-if="activeAssets.length" class="theme-settings-panel bg-white border border-gray-200 rounded-lg divide-y divide-gray-100 mb-6">
               <div v-for="asset in activeAssets" :key="asset.key" class="p-4 md:p-5 grid md:grid-cols-[240px_minmax(0,1fr)] gap-3 md:gap-6 items-center">

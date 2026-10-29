@@ -66,9 +66,16 @@ export default defineConfig(({ mode }) => {
     allowedHostsSet.add(publicHostname)
   }
   const allowedHosts = allowedHostsSet.size ? Array.from(allowedHostsSet) : undefined
+  const buildInfo = { version: env.VITE_TSBOT_VERSION || 'development', revision: env.VITE_TSBOT_REVISION || '' }
 
   return {
-    plugins: [vue()],
+    define: { __TSBOT_BUILD_INFO__: JSON.stringify(buildInfo) },
+    plugins: [vue(), {
+      name: 'tsbot-build-info',
+      generateBundle() {
+        this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify(buildInfo) })
+      },
+    }],
     server: {
       host: normalizeServerHost(env.VITE_DEV_HOST, '127.0.0.1'),
       port: normalizePort(env.VITE_DEV_PORT, 5173),

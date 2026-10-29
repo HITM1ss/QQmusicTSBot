@@ -16,6 +16,8 @@ name: Docker Publish
       - 'docker-compose.yml'
       - 'docker-compose.prebuilt.yml'
       - 'docker/**'
+      - 'scripts/compose-updater.py'
+      - 'scripts/install-updater.sh'
       - 'README.md'
       - 'README.en.md'
       - 'HOWTOSTART.md'
@@ -44,6 +46,8 @@ name: Docker Publish
       - 'docker-compose.yml'
       - 'docker-compose.prebuilt.yml'
       - 'docker/**'
+      - 'scripts/compose-updater.py'
+      - 'scripts/install-updater.sh'
       - 'README.md'
       - 'README.en.md'
       - 'HOWTOSTART.md'
@@ -204,6 +208,9 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
+          build-args: |
+            TSBOT_BUILD_VERSION=${{ needs.prepare_release.outputs.release_tag || 'development' }}
+            TSBOT_BUILD_REVISION=${{ github.sha }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -251,6 +258,9 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Build web assets
+        env:
+          VITE_TSBOT_VERSION: ${{ needs.prepare_release.outputs.release_tag || 'development' }}
+          VITE_TSBOT_REVISION: ${{ github.sha }}
         run: |
           npm ci --prefix web
           npm --prefix web run build
@@ -267,6 +277,8 @@ jobs:
         run: cargo build --manifest-path voice-service/Cargo.toml --release
 
       - name: Create release bundle
+        env:
+          TSBOT_PACKAGE_VERSION: ${{ needs.prepare_release.outputs.release_tag || 'development' }}
         run: |
           bundle_dir="$RUNNER_TEMP/${{ steps.pkg.outputs.bundle }}"
           mkdir -p "$bundle_dir/bin" "$bundle_dir/web"
@@ -275,11 +287,16 @@ jobs:
             --exclude '__pycache__' \
             --exclude '*.pyc' \
             backend/ "$bundle_dir/backend/"
+          python3 -c 'import json, os; print(json.dumps({"version": os.environ["TSBOT_PACKAGE_VERSION"], "revision": os.environ["GITHUB_SHA"]}))' > "$bundle_dir/backend/build-info.json"
           rsync -a proto/ "$bundle_dir/proto/"
           rsync -a web/dist/ "$bundle_dir/web/dist/"
           install -m 755 voice-service/target/release/voice-service "$bundle_dir/bin/voice-service"
           cp tsbot.env.example README.md README.en.md HOWTOSTART.md LICENSE docker-compose.yml docker-compose.prebuilt.yml "$bundle_dir/"
           cp run-backend.sh run-web.sh run-voicemake.sh nohup-start.sh nohup-stop.sh nohup-status.sh "$bundle_dir/"
+          mkdir -p "$bundle_dir/scripts"
+          cp scripts/compose-updater.py scripts/install-updater.sh "$bundle_dir/scripts/"
+          mkdir -p "$bundle_dir/docs"
+          cp docs/UPDATING.md "$bundle_dir/docs/"
           mkdir -p dist
           tar -C "$RUNNER_TEMP" -czf "dist/${{ steps.pkg.outputs.archive }}" "${{ steps.pkg.outputs.bundle }}"
           (cd dist && sha256sum "${{ steps.pkg.outputs.archive }}" > SHA256SUMS.txt)

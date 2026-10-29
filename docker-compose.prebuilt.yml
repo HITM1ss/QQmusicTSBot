@@ -1,6 +1,6 @@
 services:
   voice-service:
-    image: ${TSBOT_IMAGE_REGISTRY:-docker.io}/${TSBOT_IMAGE_NAMESPACE:-yumi118}/${TSBOT_IMAGE_REPO:-neteasetsbot}-voice-service:${TSBOT_IMAGE_TAG:-latest}
+    image: ${TSBOT_IMAGE_REGISTRY:-ghcr.io}/${TSBOT_IMAGE_NAMESPACE:-hitm1ss}/${TSBOT_IMAGE_REPO:-qqmusictsbot}-voice-service:${TSBOT_IMAGE_TAG:-latest}
     env_file:
       - tsbot.env
     ports:
@@ -11,7 +11,7 @@ services:
       - voicetmp:/app/tmp
 
   backend:
-    image: ${TSBOT_IMAGE_REGISTRY:-docker.io}/${TSBOT_IMAGE_NAMESPACE:-yumi118}/${TSBOT_IMAGE_REPO:-neteasetsbot}-backend:${TSBOT_IMAGE_TAG:-latest}
+    image: ${TSBOT_IMAGE_REGISTRY:-ghcr.io}/${TSBOT_IMAGE_NAMESPACE:-hitm1ss}/${TSBOT_IMAGE_REPO:-qqmusictsbot}-backend:${TSBOT_IMAGE_TAG:-latest}
     env_file:
       - tsbot.env
     environment:
@@ -19,6 +19,7 @@ services:
       TSBOT_PORT: 8009
       TSBOT_VOICE_GRPC_ADDR: voice-service:50051
       DATABASE_URL: sqlite:///./data/tsbot.db
+      TSBOT_UPDATER_DIR: /app/data/updater
     depends_on:
       - voice-service
     ports:
@@ -29,7 +30,7 @@ services:
       - voicetmp:/app/tmp
 
   web:
-    image: ${TSBOT_IMAGE_REGISTRY:-docker.io}/${TSBOT_IMAGE_NAMESPACE:-yumi118}/${TSBOT_IMAGE_REPO:-neteasetsbot}-web:${TSBOT_IMAGE_TAG:-latest}
+    image: ${TSBOT_IMAGE_REGISTRY:-ghcr.io}/${TSBOT_IMAGE_NAMESPACE:-hitm1ss}/${TSBOT_IMAGE_REPO:-qqmusictsbot}-web:${TSBOT_IMAGE_TAG:-latest}
     depends_on:
       - backend
     ports:

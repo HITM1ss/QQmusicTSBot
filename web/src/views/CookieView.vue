@@ -184,7 +184,7 @@ async function startQQAdminQr() {
 
     if (!qqAdminQrKey.value || !qqAdminPtqrtoken.value) throw new Error('failed to get qqmusic qr key')
 
-    status.value = 'qqmusic admin qr created'
+    status.value = '请使用手机 QQ 扫描二维码'
     qqAdminTimer = window.setInterval(() => {
       const check = checkQQAdminQr()
       qqAdminChecks.add(check)
@@ -198,7 +198,6 @@ async function startQQAdminQr() {
 }
 
 async function checkQQAdminQr() {
-  status.value = ''
   try {
     if (!qqAdminQrKey.value || !qqAdminPtqrtoken.value) return
     const r = await apiPost<any>('/qqmusic/login/qr/check', {
@@ -209,15 +208,15 @@ async function checkQQAdminQr() {
     const st = String(r?.status || '')
 
     if (st === 'waiting') {
-      status.value = 'qqmusic qr waiting'
+      status.value = '请使用手机 QQ 扫描二维码'
       return
     }
     if (st === 'scanning') {
-      status.value = 'qqmusic qr scanned (confirm on phone)'
+      status.value = '已扫码，请在手机上确认登录'
       return
     }
     if (st === 'expired') {
-      status.value = 'qqmusic qr expired'
+      status.value = '二维码已过期，请重新获取'
       stopQQAdminPoll()
       return
     }

@@ -75,6 +75,8 @@ TSBOT_IMAGE_TAG=vX.Y.Z docker compose -f docker-compose.prebuilt.yml up -d
 
 推送到 `main` 或 `master` 且命中发布路径时，Docker Publish 会构建三个服务镜像；全部成功后会自动递增最新稳定 `vX.Y.Z` 标签的补丁版本、创建 GitHub Release，并推送同名镜像标签。镜像仓库名可能沿用历史命名；切换镜像前请确认 docker-compose.prebuilt.yml 中的 namespace、registry 和 tag。
 
+“系统配置 → 版本与更新”显示前后端版本并支持检查更新。Linux + systemd 的预构建 Compose 部署可安装宿主机更新服务后使用一键更新，详见 [更新说明](docs/UPDATING.md)。预构建 Compose 默认使用本仓库的 GHCR 镜像。
+
 ## QQ 音乐授权与点歌
 
 QQ 音乐播放地址和用户歌单通常需要有效登录态。管理员可在 Web 控制台完成扫码，或通过管理员接口保存 Cookie：

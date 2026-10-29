@@ -2,6 +2,8 @@
 
 A modern Vue.js frontend for the TSBot music player with comprehensive music management features.
 
+System settings include frontend/backend build versions, stable-release checks, and one-click updates for configured Linux/systemd Compose hosts. See [host updater setup](../docs/UPDATING.md). Vite injects `VITE_TSBOT_VERSION` and `VITE_TSBOT_REVISION` during builds and emits `version.json`; local development is labeled as a development build.
+
 ## Features
 
 - 🎵 **Modern Music Player**: Full-featured player with playback controls, progress bar, and volume control
