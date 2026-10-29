@@ -215,7 +215,8 @@ jobs:
       - prepare_release
       - publish
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    # The bundled Opus CMake configuration is incompatible with Ubuntu 26.04's CMake 4 defaults.
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout source
