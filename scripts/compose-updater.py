@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -16,6 +17,12 @@ import time
 
 SERVICES = ("voice-service", "backend", "web")
 IMAGE_PREFIX = "ghcr.io/hitm1ss/qqmusictsbot"
+MIRROR_IMAGE_PREFIX = "ghcr.nju.edu.cn/hitm1ss/qqmusictsbot"
+PULL_TIMEOUT_SECONDS = 600
+
+
+class ImagePullError(RuntimeError):
+    """Both configured registries failed before any service was stopped."""
 
 
 def systemd_unit_contents(project: Path, name: str, worker_path: Path, config_path: Path) -> tuple[str, str]:
@@ -29,7 +36,7 @@ Requires=docker.service
 Type=oneshot
 ExecStart=/usr/bin/python3 {worker_path} {config_path}
 ExecStopPost=/usr/bin/python3 {worker_path} {config_path} --finalize
-TimeoutStartSec=20min
+TimeoutStartSec=35min
 UMask=0077
 '''
     path = f'''[Unit]
@@ -92,12 +99,46 @@ class Updater:
         self.directory = self.project / "data" / "updater"
         self.compose = ["docker", "compose", "--project-directory", str(self.project), "--project-name", config["name"], "-f", str(self.project / "docker-compose.prebuilt.yml")]
 
-    def command(self, args: list[str], env: dict | None = None, timeout: int = 600) -> str:
-        result = subprocess.run(args, cwd=self.project, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
-        if result.returncode:
+    def command(self, args: list[str], env: dict | None = None, timeout: float = 600) -> str:
+        with subprocess.Popen(args, cwd=self.project, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True) as process:
+            try:
+                output, _ = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                # Compose can launch a CLI plugin child. Stop the whole client process group
+                # before trying another registry, rather than leaving an old pull running.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.communicate()
+                raise
+        if process.returncode:
             # Compose config and container inspect can contain credentials. Never dump their output.
-            raise RuntimeError(f"Command failed: {args[0]} (exit {result.returncode})")
-        return result.stdout
+            raise RuntimeError(f"Command failed: {args[0]} (exit {process.returncode})")
+        return output
+
+    def pull_images(self, version: str, environment: dict) -> str:
+        self.status("running", "正在从 GHCR 拉取镜像，最多等待 10 分钟", version)
+        try:
+            self.command([*self.compose, "pull", *SERVICES], environment, timeout=PULL_TIMEOUT_SECONDS)
+            return "GHCR"
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+            reason = "超时（10 分钟）" if isinstance(exc, subprocess.TimeoutExpired) else "失败"
+            self.status("running", f"GHCR 拉取{reason}，自动切换南大源重试", version)
+        deadline = time.monotonic() + PULL_TIMEOUT_SECONDS
+        try:
+            for service in SERVICES:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired("NJU image pulls", PULL_TIMEOUT_SECONDS)
+                self.command(["docker", "pull", f"{MIRROR_IMAGE_PREFIX}-{service}:{version}"], timeout=remaining)
+            # Keep Compose and the saved registry settings unchanged. Retag only after
+            # every mirror image is present; container recreation uses --pull never.
+            for service in SERVICES:
+                self.command(["docker", "image", "tag", f"{MIRROR_IMAGE_PREFIX}-{service}:{version}", f"{IMAGE_PREFIX}-{service}:{version}"], timeout=30)
+            return "南大源"
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+            raise ImagePullError("GHCR 和南大源均拉取失败，未停止服务或切换版本") from exc
 
     def status(self, state: str, message: str, version: str = "") -> None:
         atomic_write(self.directory / "status.json", json.dumps({"state": state, "message": message, "version": version}, ensure_ascii=False), 0o644)
@@ -145,8 +186,7 @@ class Updater:
                 for service in SERVICES:
                     if resolved["services"][service]["image"] != f"{IMAGE_PREFIX}-{service}:{version}":
                         raise ValueError("Unexpected image repository in Compose configuration")
-                self.status("running", "正在拉取更新镜像", version)
-                self.command([*self.compose, "pull", *SERVICES], environment)
+                image_source = self.pull_images(version, environment)
                 # Stop writes before making the upgrade backup.
                 self.status("running", "正在备份数据库", version)
                 self.command([*self.compose, "stop", "backend"])
@@ -184,7 +224,7 @@ class Updater:
                         served = json.loads(self.command(["docker", "exec", web_id, "wget", "-qO-", "http://127.0.0.1:8080/version.json"], timeout=10))
                         if served["version"] != version:
                             raise RuntimeError("Frontend version does not match")
-                        self.status("success", "更新完成，请刷新页面", version)
+                        self.status("success", f"更新完成（{image_source}），请刷新页面", version)
                         return
                     except (RuntimeError, subprocess.TimeoutExpired, ValueError, KeyError):
                         if attempt == 29:
@@ -201,7 +241,7 @@ class Updater:
                     # Keep the selected tag for diagnosis; a failed startup may already have migrated data.
                     message = "更新后服务检查失败，请查看宿主机日志；数据库备份位于 data/backups"
                 else:
-                    message = "更新失败，未切换版本，请查看宿主机更新服务日志"
+                    message = str(exc) if isinstance(exc, ImagePullError) else "更新失败，未切换版本，请查看宿主机更新服务日志"
                 self.status("failed", message, version)
                 print(f"Failure: {type(exc).__name__}: {exc}", file=sys.stderr)
                 raise

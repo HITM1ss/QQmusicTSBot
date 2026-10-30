@@ -2,8 +2,6 @@ import { getCsrfToken } from './session'
 
 const RAW_API_BASE = (import.meta as any).env?.VITE_API_BASE || '/api'
 const API_BASE = String(RAW_API_BASE).replace(/\/+$/, '')
-const RAW_API_TOKEN = (import.meta as any).env?.VITE_API_TOKEN || ''
-const API_TOKEN = String(RAW_API_TOKEN).trim()
 
 export function apiUrl(path: string): string {
   if (/^https?:\/\//i.test(path)) return path
@@ -13,15 +11,6 @@ export function apiUrl(path: string): string {
 
 function buildHeaders(extraHeaders?: Record<string, string>, contentType?: string): Record<string, string> {
   const headers: Record<string, string> = { ...(extraHeaders || {}) }
-
-  const hasAuthHeader = Object.keys(headers).some((key) => {
-    const lower = key.toLowerCase()
-    return lower === 'authorization' || lower === 'x-api-token'
-  })
-
-  if (API_TOKEN && !hasAuthHeader) {
-    headers.Authorization = `Bearer ${API_TOKEN}`
-  }
 
   const hasContentType = Object.keys(headers).some((key) => key.toLowerCase() === 'content-type')
   if (contentType && !hasContentType) {

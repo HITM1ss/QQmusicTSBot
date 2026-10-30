@@ -312,8 +312,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="theme-settings-shell h-full flex flex-col bg-gray-50">
-    <header class="theme-settings-header bg-white border-b border-gray-200 px-4 md:px-7 py-3 flex flex-wrap items-center justify-between gap-3">
+  <div class="theme-settings-shell h-full min-h-0 overflow-hidden flex flex-col bg-gray-50">
+    <header class="theme-settings-header shrink-0 bg-white border-b border-gray-200 px-4 md:px-7 py-3 flex flex-wrap items-center justify-between gap-3">
       <div class="min-w-0">
         <h1 class="text-xl font-bold text-gray-900 flex items-center gap-2">
           <ServerCog :size="22" class="text-blue-600" />
@@ -342,7 +342,7 @@ onBeforeUnmount(() => {
     </header>
 
     <div class="flex-1 min-h-0 flex flex-col md:flex-row">
-      <nav class="theme-settings-nav bg-white border-b md:border-b-0 md:border-r border-gray-200 md:w-56 p-3 overflow-x-auto md:overflow-y-auto flex md:block gap-1">
+      <nav class="theme-settings-nav shrink-0 bg-white border-b md:border-b-0 md:border-r border-gray-200 md:w-56 p-3 overflow-x-auto overflow-y-hidden md:overflow-x-hidden md:overflow-y-auto flex md:block gap-1">
         <button
           v-for="group in GROUPS"
           :key="group[0]"
@@ -354,7 +354,7 @@ onBeforeUnmount(() => {
         </button>
       </nav>
 
-      <main class="theme-settings-workspace flex-1 overflow-y-auto px-4 md:px-8 py-6 pb-8">
+      <main class="theme-settings-workspace flex-1 min-h-0 min-w-0 overflow-y-auto px-4 md:px-8 py-6 pb-8">
         <div class="max-w-3xl mx-auto">
           <div v-if="loading" class="py-20 text-center text-gray-500">正在加载配置...</div>
           <template v-else-if="payload">
@@ -407,7 +407,7 @@ onBeforeUnmount(() => {
                 <p v-else-if="logsError" class="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{{ logsError }}</p>
                 <template v-else>
                   <p v-if="logPayload?.message" class="mb-3 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">{{ logPayload.message }}</p>
-                  <pre class="min-h-72 max-h-[62vh] overflow-auto rounded-md bg-slate-950 p-4 text-xs leading-5 text-slate-100 whitespace-pre-wrap break-words font-mono">{{ logPayload?.content || '暂无可显示日志。' }}</pre>
+                  <pre class="min-h-72 overflow-x-auto rounded-md bg-slate-950 p-4 text-xs leading-5 text-slate-100 whitespace-pre-wrap break-words font-mono">{{ logPayload?.content || '暂无可显示日志。' }}</pre>
                   <p v-if="logPayload" class="mt-3 text-xs text-gray-400">已读取 {{ logPayload.line_count }} 行；日志中的密码、Cookie 和 Token 会自动隐藏。</p>
                 </template>
               </div>

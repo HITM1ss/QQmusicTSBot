@@ -39,7 +39,7 @@ async function refresh() {
 
 function scheduleRefresh() {
   window.clearTimeout(timer)
-  if (!refreshDeadline) refreshDeadline = Date.now() + 20 * 60 * 1000
+  if (!refreshDeadline) refreshDeadline = Date.now() + 35 * 60 * 1000
   if (Date.now() > refreshDeadline) {
     error.value = '等待更新超时，请查看宿主机更新服务日志，并手动刷新状态'
     return

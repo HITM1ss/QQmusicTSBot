@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -114,6 +115,71 @@ class HostUpdaterTests(unittest.TestCase):
         self.assertFalse(any("stop" in call for call in self.calls))
         self.assertIn("TSBOT_IMAGE_TAG=v0.1.5", (self.project / ".env").read_text())
         self.assertEqual("failed", json.loads((self.project / "data/updater/status.json").read_text())["state"])
+
+    def test_primary_timeout_switches_to_mirror_and_retags_before_stopping(self):
+        new = {name: {"Id": name, "Config": {"Image": f"{worker.IMAGE_PREFIX}-{name}:v0.1.6", "Env": ["TSBOT_BUILD_VERSION=v0.1.6"]}} for name in worker.SERVICES}
+        recorded = []
+        def fetch(args, env=None, timeout=600):
+            recorded.append((args, timeout))
+            if args[-4:] == ["pull", *worker.SERVICES]:
+                raise subprocess.TimeoutExpired(args, timeout)
+            return self.command(args, env, timeout)
+        with patch.object(self.updater, "inspect_services", side_effect=[self.containers, new]), patch.object(self.updater, "command", side_effect=fetch):
+            self.updater.run()
+        primary = next((args, timeout) for args, timeout in recorded if args[-4:] == ["pull", *worker.SERVICES])
+        self.assertEqual(600, primary[1])
+        pulls = [(args, timeout) for args, timeout in recorded if args[:2] == ["docker", "pull"]]
+        self.assertEqual([f"{worker.MIRROR_IMAGE_PREFIX}-{name}:v0.1.6" for name in worker.SERVICES], [args[-1] for args, _ in pulls])
+        self.assertTrue(all(0 < timeout <= 600 for _, timeout in pulls))
+        tags = [index for index, (args, _) in enumerate(recorded) if args[:3] == ["docker", "image", "tag"]]
+        stop = next(index for index, (args, _) in enumerate(recorded) if "stop" in args)
+        self.assertEqual(3, len(tags))
+        self.assertLess(max(tags), stop)
+        self.assertNotIn("ghcr.nju.edu.cn", (self.project / ".env").read_text())
+        self.assertIn("南大源", json.loads((self.project / "data/updater/status.json").read_text())["message"])
+
+    def test_mirror_failure_never_retags_partial_downloads_or_stops_services(self):
+        def fetch(args, env=None, timeout=600):
+            self.calls.append(args)
+            if args[-4:] == ["pull", *worker.SERVICES]:
+                raise subprocess.TimeoutExpired(args, timeout)
+            if args[:2] == ["docker", "pull"] and "-backend:" in args[-1]:
+                raise RuntimeError("mirror pull failed")
+            return self.command(args, env, timeout)
+        with patch.object(self.updater, "inspect_services", return_value=self.containers), patch.object(self.updater, "command", side_effect=fetch):
+            with self.assertRaises(worker.ImagePullError):
+                self.updater.run()
+        self.assertFalse(any("stop" in args or args[:3] == ["docker", "image", "tag"] for args in self.calls))
+        self.assertIn("TSBOT_IMAGE_TAG=v0.1.5", (self.project / ".env").read_text())
+        self.assertFalse((self.project / "data/backups").exists())
+
+    def test_mirror_pulls_share_one_ten_minute_budget(self):
+        recorded = []
+        def fetch(args, env=None, timeout=600):
+            if args[-4:] == ["pull", *worker.SERVICES]:
+                raise RuntimeError("GHCR failed")
+            recorded.append((args, timeout))
+            return ""
+        with patch.object(self.updater, "command", side_effect=fetch), patch.object(worker.time, "monotonic", side_effect=[0, 0, 300, 601]):
+            with self.assertRaises(worker.ImagePullError):
+                self.updater.pull_images("v0.1.6", {})
+        self.assertEqual([600, 300], [timeout for _, timeout in recorded])
+        self.assertTrue(all(args[:2] == ["docker", "pull"] for args, _ in recorded))
+
+    def test_primary_success_does_not_use_mirror(self):
+        with patch.object(self.updater, "command") as command:
+            self.assertEqual("GHCR", self.updater.pull_images("v0.1.6", {}))
+        command.assert_called_once_with([*self.updater.compose, "pull", *worker.SERVICES], {}, timeout=600)
+
+    def test_command_timeout_kills_the_compose_process_group(self):
+        with patch.object(worker.subprocess, "Popen") as popen, patch.object(worker.os, "killpg") as kill_group:
+            process = popen.return_value.__enter__.return_value
+            process.pid = 12345
+            process.communicate.side_effect = [subprocess.TimeoutExpired("docker", 600), ("", "")]
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.updater.command(["docker", "compose", "pull"], timeout=600)
+        kill_group.assert_called_once_with(12345, worker.signal.SIGKILL)
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
 
     def test_missing_database_restarts_old_backend_and_keeps_old_tag(self):
         (self.project / "data/tsbot.db").unlink()

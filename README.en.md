@@ -38,6 +38,8 @@ make all
 
 On first startup, the backend creates a one-time admin password in logs/initial-admin-password.txt. Sign in to the Web console, change the password, and authorize QQ Music under System Settings → Music Authorization.
 
+Choose **Guest login** on the sign-in page to search, browse playlists, save local favorites, and add songs to the queue without an account. Guests can view playback and history. Settings, music authorization, software updates, immediate playback, queue editing, and global player controls require an administrator.
+
 For local development, run the services separately:
 
 ~~~bash
@@ -87,7 +89,7 @@ Copyright restrictions, VIP-only tracks, and expired Cookies can make a song unp
 
 ## External API
 
-Set TSBOT_API_TOKEN or TSBOT_API_TOKENS to protect the external API. Use either an Authorization Bearer token or an x-api-token header.
+The external API requires TSBOT_API_TOKEN or TSBOT_API_TOKENS and accepts either an Authorization Bearer token or an x-api-token header. Requests are rejected when no token is configured, so this API cannot bypass guest permissions. Keep tokens in trusted external clients; never bake them into the shared frontend.
 
 - GET /external/status
 - GET /external/search?source=qqmusic&keywords=Rice Field
@@ -109,6 +111,8 @@ backend/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ## Upgrade Notes
 
 On startup, the backend removes queued entries from retired sources so they cannot block playback after an upgrade. Old history entries from retired sources cannot be replayed and may be removed when no longer needed.
+
+Guest access adds a guest_sessions table automatically and preserves existing administrator accounts, music credentials, and queues. Browser users must sign in or choose guest access. Guest sessions expire after seven days and are invalidated on logout; browser writes require the session's CSRF token. External API clients previously running without authentication must configure and send a token after upgrading.
 
 ## Security
 

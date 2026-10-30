@@ -12,6 +12,7 @@ import {
 import EmptyState from '../components/EmptyState.vue'
 import FloatingErrorToast from '../components/FloatingErrorToast.vue'
 import { apiPost } from '../api'
+import { isAdmin } from '../auth'
 import { useTransientMessage } from '../composables/useTransientMessage'
 import {
   getFavoriteSongKey,
@@ -250,6 +251,7 @@ onMounted(refresh)
                     <button
                       class="p-2 text-gray-400 hover:text-pink-600 hover:bg-pink-50 rounded-lg transition-colors"
                       title="立即播放"
+                      v-if="isAdmin"
                       @click="playSong(song)"
                     >
                       <Play :size="18" />

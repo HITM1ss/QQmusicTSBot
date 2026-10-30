@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { apiGet, apiPost } from '../api'
+import { isAdmin } from '../auth'
 import { 
   Clock, 
   Play, 
@@ -197,6 +198,7 @@ onMounted(() => {
                       </div>
                       <div 
                         class="absolute inset-0 bg-black/10 opacity-0 group-hover/cover:opacity-100 flex items-center justify-center transition-all cursor-pointer backdrop-blur-[1px]"
+                        v-if="isAdmin"
                         @click="playTrack(track)"
                       >
                         <Play :size="16" class="text-white drop-shadow-md" fill="currentColor" />
@@ -233,6 +235,7 @@ onMounted(() => {
                       <Plus :size="18" />
                     </button>
                     <button
+                      v-if="isAdmin"
                       @click="playTrack(track)"
                       class="p-2 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
                       title="立即播放"

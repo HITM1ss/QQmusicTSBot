@@ -24,7 +24,7 @@ export const router = createRouter({
     { path: '/history', component: HistoryView },
     { path: '/login', name: 'login', component: LoginView, meta: { authPage: true } },
     { path: '/change-password', name: 'change-password', component: ChangePasswordView, meta: { authPage: true, requiresAuth: true } },
-    { path: '/settings', component: SettingsView, meta: { requiresAuth: true } },
+    { path: '/settings', component: SettingsView, meta: { requiresAdmin: true } },
     { path: '/cookie', redirect: { path: '/settings', query: { group: 'authorization' } } },
     { path: '/lyrics', component: LyricsView },
   ],
@@ -35,10 +35,13 @@ router.beforeEach(async (to: RouteLocationNormalized) => {
   if (status.authenticated && status.must_change_password && to.name !== 'change-password') {
     return { name: 'change-password' }
   }
-  if (to.meta.requiresAuth && !status.authenticated) {
+  if (to.name !== 'login' && !status.authenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
-  if (to.name === 'login' && status.authenticated) {
+  if ((to.meta.requiresAdmin || to.name === 'change-password') && status.role !== 'admin') {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
+  if (to.name === 'login' && status.role === 'admin') {
     return status.must_change_password ? { name: 'change-password' } : '/settings'
   }
   return true

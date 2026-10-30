@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { apiGet, apiPost } from '../api'
+import { isAdmin } from '../auth'
 import { 
   Search, 
   Play, 
@@ -53,6 +54,7 @@ function toggleLocalFav(song: any) {
 
 // Check QQ Music admin configuration status
 async function checkQQMusicConfigStatus() {
+  if (!isAdmin.value) return
   try {
     const status = await apiGet<any>('/admin/qqmusic/status')
     qqMusicConfigured.value = !!status?.admin_cookie_set
@@ -282,10 +284,10 @@ onMounted(() => {
     <div class="bg-white/80 backdrop-blur-md border-b border-gray-200 px-6 py-4 sticky top-0 z-30 shadow-sm transition-all duration-300">
       <h1 class="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2">
         <Search :size="28" class="text-blue-600" />
-        搜索媒体
+        {{ isAdmin ? '搜索媒体' : '访客点歌' }}
       </h1>
       
-      <div class="mb-4 flex justify-end">
+      <div v-if="isAdmin" class="mb-4 flex justify-end">
         <div class="flex items-center gap-2">
           <div v-if="qqMusicConfigured" class="flex items-center gap-2 text-sm text-green-600">
             <User :size="16" />
@@ -392,7 +394,7 @@ onMounted(() => {
              <Search :size="32" />
            </div>
            <h2 class="text-lg font-bold text-gray-900">开始搜索内容</h2>
-           <p class="text-gray-500 text-sm mt-1">搜索歌曲、加入队列或直接播放</p>
+           <p class="text-gray-500 text-sm mt-1">{{ isAdmin ? '搜索歌曲、加入队列或直接播放' : '搜索喜欢的歌曲，点击加号加入点歌队列' }}</p>
         </div>
         
       </div>
@@ -443,6 +445,7 @@ onMounted(() => {
                       </div>
                       <div 
                         class="absolute inset-0 bg-black/10 opacity-0 group-hover/cover:opacity-100 flex items-center justify-center transition-all cursor-pointer backdrop-blur-[1px]"
+                        v-if="isAdmin"
                         @click="enqueue(song, true)"
                       >
                         <Play :size="16" class="text-white drop-shadow-md" fill="currentColor" />

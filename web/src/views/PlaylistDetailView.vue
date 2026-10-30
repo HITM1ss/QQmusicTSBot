@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiGet, apiPost } from '../api'
+import { isAdmin } from '../auth'
 import { 
   ArrowLeft, 
   Play, 
@@ -101,9 +102,7 @@ async function playAll() {
   status.value = ''
 
   const confirmed = confirm(
-    `确定要将歌单《${playlist.value?.name || '未知歌单'}》的全部 ${tracks.value.length} 首歌曲添加到播放队列并开始播放吗？
-
-第一首会立即开始播放，其余歌曲将依次加入队列。`,
+    `确定要将歌单《${playlist.value?.name || '未知歌单'}》的全部 ${tracks.value.length} 首歌曲添加到播放队列吗？${isAdmin.value ? '\n\n第一首会立即开始播放，其余歌曲将依次加入队列。' : ''}`,
   )
   
   if (!confirmed) {
@@ -116,7 +115,7 @@ async function playAll() {
     const title = getTrackTitle(track)
     status.value = `正在添加 ${index + 1}/${tracks.value.length}：${title}`
     try {
-      await enqueueQQMusicTrack(track, index === 0)
+      await enqueueQQMusicTrack(track, isAdmin.value && index === 0)
       addedCount++
     } catch {
       failed.push(title)
@@ -331,7 +330,7 @@ onMounted(() => {
             <div class="flex gap-4">
               <button @click="playAll" class="btn-primary px-8 py-3 text-lg shadow-lg shadow-blue-500/30 hover:shadow-blue-500/40 hover:-translate-y-0.5 transition-all w-full md:w-auto flex justify-center">
                 <Play :size="20" fill="currentColor" />
-                播放全部
+                {{ isAdmin ? '播放全部' : '全部加入队列' }}
               </button>
               <button
                 @click="togglePlaylist"
@@ -395,6 +394,7 @@ onMounted(() => {
                 <td class="px-3 md:px-6 py-3 md:py-4 text-right">
                   <div class="flex items-center justify-end gap-2 md:opacity-0 group-hover:opacity-100 transition-all duration-200 md:transform md:translate-x-2 group-hover:translate-x-0">
                     <button 
+                      v-if="isAdmin"
                       @click="enqueue(track, true)"
                       class="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-100/50 rounded-lg transition-colors"
                       title="立即播放"

@@ -30,9 +30,13 @@ from .db import (
 )
 from .models import AdminCredential, HistoryItem, QueueItem, Secret
 from .auth import (
+    GUEST_COOKIE,
+    authorize_web_request,
     clear_session_cookie,
+    create_guest_session,
     create_session,
     get_admin_session,
+    get_web_session,
     initialize_admin,
     invalidate_sessions,
     remove_initial_password_file,
@@ -60,7 +64,7 @@ from .logger import logger
 from .version import build_info, latest_release, parse_version
 from .updates import submit_update, update_status
 
-app = FastAPI(title="tsbot-backend")
+app = FastAPI(title="tsbot-backend", dependencies=[Depends(authorize_web_request)])
 
 app.add_middleware(
     CORSMiddleware,
@@ -112,9 +116,6 @@ def _get_request_api_token(request: Request) -> str:
 
 
 def _path_requires_api_token(path: str) -> bool:
-    if not settings.get_api_tokens():
-        return False
-
     normalized = _normalize_request_path(path)
     return normalized == "/external" or normalized.startswith("/external/")
 
@@ -122,7 +123,7 @@ def _path_requires_api_token(path: str) -> bool:
 def _check_api_token(request: Request) -> str | None:
     tokens = settings.get_api_tokens()
     if not tokens:
-        return None
+        return "外部 API 未配置 Token，请联系管理员"
 
     provided = _get_request_api_token(request)
     if not provided:
@@ -2646,23 +2647,46 @@ def auth_status(request: Request, session: Session = Depends(get_session)) -> di
     payload = {
         "initialized": credential is not None,
         "authenticated": False,
+        "role": "none",
         "must_change_password": False,
         "username": "",
         "csrf_token": "",
     }
-    if credential is None:
-        return payload
     try:
         credential, admin_session = get_admin_session(request, session)
     except HTTPException:
+        try:
+            role, guest_session = get_web_session(request, session)
+        except HTTPException:
+            return payload
+        payload.update({"authenticated": True, "role": role, "username": "访客", "csrf_token": guest_session.csrf_token})
         return payload
     payload.update({
         "authenticated": True,
+        "role": "admin",
         "must_change_password": credential.must_change_password,
         "username": credential.username,
         "csrf_token": admin_session.csrf_token,
     })
     return payload
+
+
+@app.post("/auth/guest")
+def auth_guest(request: Request, response: Response, session: Session = Depends(get_session)) -> dict:
+    # Reuse an existing guest session rather than creating rows on every visit.
+    try:
+        role, row = get_web_session(request, session)
+    except HTTPException:
+        role, row = "none", None
+    if role == "admin":
+        require_csrf(request, row)
+        session.delete(row)
+        session.commit()
+    if role != "guest":
+        raw_token, row = create_guest_session(session)
+        set_session_cookie(response, raw_token, request, cookie_name=GUEST_COOKIE)
+    clear_session_cookie(response)
+    return {"initialized": True, "authenticated": True, "role": "guest", "must_change_password": False, "username": "访客", "csrf_token": row.csrf_token}
 
 
 @app.post("/auth/login")
@@ -2682,8 +2706,18 @@ def auth_login(
     _login_attempts.pop(_login_rate_limit_key(request), None)
     raw_token, admin_session = create_session(session, credential)
     set_session_cookie(response, raw_token, request)
+    try:
+        role, old_session = get_web_session(request, session)
+    except HTTPException:
+        pass
+    else:
+        if role == "guest":
+            session.delete(old_session)
+            session.commit()
+    clear_session_cookie(response, cookie_name=GUEST_COOKIE)
     return {
         "authenticated": True,
+        "role": "admin",
         "must_change_password": credential.must_change_password,
         "username": credential.username,
         "csrf_token": admin_session.csrf_token,
@@ -2716,6 +2750,7 @@ def auth_change_password(
     remove_initial_password_file()
     return {
         "authenticated": True,
+        "role": "admin",
         "must_change_password": False,
         "username": credential.username,
         "csrf_token": new_session_row.csrf_token,
@@ -2724,11 +2759,12 @@ def auth_change_password(
 
 @app.post("/auth/logout")
 def auth_logout(request: Request, response: Response, session: Session = Depends(get_session)) -> dict:
-    _, admin_session = require_admin(request, session, allow_password_change=True)
+    _, admin_session = get_web_session(request, session, allow_password_change=True)
     require_csrf(request, admin_session)
     session.delete(admin_session)
     session.commit()
     clear_session_cookie(response)
+    clear_session_cookie(response, cookie_name=GUEST_COOKIE)
     return {"ok": True}
 
 
@@ -3012,14 +3048,16 @@ async def admin_debug_runtime(request: Request) -> dict:
 
 
 @app.post("/queue/qqmusic")
-async def add_queue_qqmusic(req: AddQQMusicQueueRequest) -> dict:
+async def add_queue_qqmusic(req: AddQQMusicQueueRequest, request: Request) -> dict:
+    if request.state.web_role == "guest" and req.play_now:
+        raise HTTPException(status_code=403, detail="访客可加入队列，立即播放仅限管理员")
     try:
         item_id, trial = await _enqueue_qqmusic_song(
             song_mid=req.song_mid,
             title=req.title,
             artist=req.artist,
             play_now=req.play_now,
-            requested_by="web",
+            requested_by="web_guest" if request.state.web_role == "guest" else "web",
             quality=req.quality,
             album_mid=req.album_mid,
             album=req.album,
@@ -3175,10 +3213,13 @@ async def _replay_history_item(
 @app.post("/history/{history_id}/replay")
 async def replay_from_history(
     history_id: int,
+    request: Request,
     play_now: bool = True,
     session: Session = Depends(get_session)
 ) -> dict:
     """Replay a track from history using its track_id to get a fresh playable source"""
+    if request.state.web_role == "guest" and play_now:
+        raise HTTPException(status_code=403, detail="访客可加入队列，立即播放仅限管理员")
     hist_item = session.get(HistoryItem, history_id)
     if not hist_item:
         raise HTTPException(status_code=404, detail="History item not found")

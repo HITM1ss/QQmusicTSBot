@@ -17,6 +17,7 @@
             <span class="hidden sm:inline">刷新</span>
           </button>
           <button
+            v-if="isAdmin"
             @click="clearAllTracks"
             class="text-sm py-1.5 px-3 rounded-lg border border-red-200 bg-white text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors flex items-center gap-2 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
             :disabled="loading || !tracks.length"
@@ -24,10 +25,10 @@
             <Trash2 :size="16" />
             <span class="hidden sm:inline">全部删除</span>
           </button>
-          <button class="btn-primary text-sm py-1.5 px-3 shadow-sm">
+          <RouterLink to="/search" class="btn-primary text-sm py-1.5 px-3 shadow-sm">
             <Plus :size="16" />
             <span class="hidden sm:inline">添加歌曲</span>
-          </button>
+          </RouterLink>
         </div>
       </div>
       
@@ -75,6 +76,7 @@
         <div class="bg-gray-50 border-b border-gray-200 px-4 md:px-6 py-2 flex items-center justify-between text-xs text-gray-500">
           <div class="flex items-center gap-4">
             <button 
+              v-if="isAdmin"
               @click="selectAll"
               class="hover:text-blue-600 transition-colors font-medium"
             >
@@ -85,7 +87,7 @@
             </span>
           </div>
           
-          <div v-if="selectedTracks.size > 0" class="flex items-center gap-3 animate-fade-in">
+          <div v-if="isAdmin && selectedTracks.size > 0" class="flex items-center gap-3 animate-fade-in">
             <span class="font-medium text-gray-700">已选择 {{ selectedTracks.size }} 首</span>
             <button 
               @click.stop="deleteSelected" 
@@ -101,6 +103,7 @@
         <div class="flex-1 overflow-y-auto scrollbar-thin px-2 md:px-6 pb-24 pt-2">
           <VueDraggable
             v-model="tracks"
+            :disabled="!isAdmin"
             @start="onDragStart"
             @end="onDragEnd"
             class="space-y-1"
@@ -114,17 +117,17 @@
                 currentPlayingId === track.id ? 'bg-blue-50/80 border-blue-100 shadow-sm' : 'hover:bg-white hover:border-gray-200 hover:shadow-sm',
                 selectedTracks.has(track.id) ? 'bg-blue-50 border-blue-200' : ''
               ]"
-              @click="toggleTrackSelection(track.id)"
+              @click="isAdmin && toggleTrackSelection(track.id)"
             >
               <!-- Drag handle & index -->
               <div class="flex items-center gap-2 w-8 md:w-10 flex-shrink-0 justify-center">
-                <div class="drag-handle cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 p-1">
+                <div v-if="isAdmin" class="drag-handle cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 p-1">
                   <GripVertical :size="16" />
                 </div>
               </div>
               
               <!-- Checkbox -->
-              <div class="flex-shrink-0" @click.stop>
+              <div v-if="isAdmin" class="flex-shrink-0" @click.stop>
                 <input
                   type="checkbox"
                   :checked="selectedTracks.has(track.id)"
@@ -148,6 +151,7 @@
                 <!-- Play Overlay -->
                  <div 
                   class="absolute inset-0 bg-black/20 opacity-0 group-hover/cover:opacity-100 flex items-center justify-center transition-all cursor-pointer backdrop-blur-[1px]"
+                  v-if="isAdmin"
                   @click.stop="playTrack(track)"
                 >
                   <Play v-if="currentPlayingId !== track.id" :size="16" class="text-white drop-shadow-md" fill="currentColor" />
@@ -186,6 +190,7 @@
               <!-- Actions -->
               <div class="flex items-center gap-1 md:opacity-0 group-hover:opacity-100 transition-opacity">
                 <button
+                  v-if="isAdmin"
                   @click.stop="prioritizeTrack(track)"
                   :disabled="pinningTrackId !== null"
                   class="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -205,6 +210,7 @@
                 </button>
                 
                 <button
+                  v-if="isAdmin"
                   @click.stop="removeTrack(track.id)"
                   class="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
                   title="从队列移除"
@@ -239,6 +245,7 @@ import {
   ListMusic
 } from 'lucide-vue-next'
 import { apiGet, apiPost, apiDelete } from '../api'
+import { isAdmin } from '../auth'
 import LoadingSpinner from './LoadingSpinner.vue'
 import EmptyState from './EmptyState.vue'
 import FloatingErrorToast from './FloatingErrorToast.vue'

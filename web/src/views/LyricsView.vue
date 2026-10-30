@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiGet, apiPost } from '../api'
+import { isAdmin } from '../auth'
 import LyricsDisplay from '../components/LyricsDisplay.vue'
 import { isFavoriteSong, toggleFavoriteSong } from '../utils/favorites'
 import { 
@@ -278,7 +279,7 @@ onUnmounted(() => {
               <span class="w-10 text-right">{{ formatTime(currentTime) }}</span>
               <div 
                 class="flex-1 h-1 bg-white/10 rounded-full cursor-pointer relative group"
-                @click="seekTo"
+                @click="isAdmin && seekTo($event)"
               >
                 <div 
                   class="absolute top-0 left-0 h-full bg-white rounded-full opacity-80 group-hover:opacity-100 transition-all"
@@ -295,6 +296,7 @@ onUnmounted(() => {
             <!-- Buttons -->
             <div class="flex items-center justify-between">
               <button 
+                v-if="isAdmin"
                 @click="toggleShuffle"
                 :class="[
                   'p-2 transition-colors rounded-full hover:bg-white/10 active:scale-95',
@@ -307,6 +309,7 @@ onUnmounted(() => {
               
               <div class="flex items-center gap-6">
                 <button 
+                  v-if="isAdmin"
                   @click="skipBackward"
                   class="text-white/70 hover:text-white transition-colors p-2 hover:scale-110 active:scale-95 transform duration-200"
                 >
@@ -314,6 +317,7 @@ onUnmounted(() => {
                 </button>
                 
                 <button 
+                  v-if="isAdmin"
                   @click="togglePlayPause"
                   class="bg-white text-black rounded-full p-4 hover:scale-105 active:scale-95 transition-all shadow-lg"
                 >
@@ -322,6 +326,7 @@ onUnmounted(() => {
                 </button>
                 
                 <button 
+                  v-if="isAdmin"
                   @click="skipForward"
                   class="text-white/70 hover:text-white transition-colors p-2 hover:scale-110 active:scale-95 transform duration-200"
                 >
@@ -331,6 +336,7 @@ onUnmounted(() => {
               
               <div class="flex items-center gap-2">
                 <button 
+                  v-if="isAdmin"
                   @click="toggleRepeat"
                   :class="[
                     'p-2 transition-colors rounded-full relative hover:bg-white/10 active:scale-95',
@@ -395,7 +401,7 @@ onUnmounted(() => {
               <!-- Mobile Progress -->
               <div 
                 class="h-1 bg-white/10 rounded-full cursor-pointer relative mb-4"
-                @click="seekTo"
+                @click="isAdmin && seekTo($event)"
               >
                 <div 
                   class="absolute top-0 left-0 h-full bg-white rounded-full"
@@ -406,6 +412,7 @@ onUnmounted(() => {
               <!-- Mobile Buttons -->
               <div class="flex items-center justify-around">
                 <button 
+                  v-if="isAdmin"
                   @click="toggleShuffle"
                   :class="[
                     'p-2 transition-colors rounded-full active:scale-95',
@@ -414,20 +421,24 @@ onUnmounted(() => {
                 >
                   <Shuffle :size="20" />
                 </button>
-                <button @click="skipBackward" class="text-white/80 p-2 active:scale-95 transition-transform">
+                <button v-if="isAdmin"
+                  @click="skipBackward" class="text-white/80 p-2 active:scale-95 transition-transform">
                   <SkipBack :size="24" fill="currentColor" />
                 </button>
                 <button 
+                  v-if="isAdmin"
                   @click="togglePlayPause"
                   class="bg-white text-black rounded-full p-3 shadow-lg active:scale-95 transition-transform"
                 >
                   <Play v-if="!isPlaying" :size="24" fill="currentColor" class="ml-0.5" />
                   <Pause v-else :size="24" fill="currentColor" />
                 </button>
-                <button @click="skipForward" class="text-white/80 p-2 active:scale-95 transition-transform">
+                <button v-if="isAdmin"
+                  @click="skipForward" class="text-white/80 p-2 active:scale-95 transition-transform">
                   <SkipForward :size="24" fill="currentColor" />
                 </button>
                 <button 
+                  v-if="isAdmin"
                   @click="toggleRepeat"
                   :class="[
                     'p-2 transition-colors rounded-full relative active:scale-95',

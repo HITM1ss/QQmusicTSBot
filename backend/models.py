@@ -43,6 +43,14 @@ class AdminSession(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
 
+class GuestSession(Base):
+    __tablename__ = "guest_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    csrf_token: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
 class AppSetting(Base):
     __tablename__ = "app_settings"
 

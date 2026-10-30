@@ -3,7 +3,7 @@
     <!-- Progress Bar (Floating on top or integrated) -->
     <div 
       class="absolute top-0 left-0 right-0 h-1 bg-transparent group cursor-pointer"
-      @click="handleProgressClick"
+      @click="isAdmin && handleProgressClick($event)"
     >
       <div class="absolute inset-0 bg-gray-200/50 group-hover:h-2 transition-all duration-200"></div>
       <div 
@@ -69,7 +69,7 @@
         </div>
         
         <!-- Player controls (Center) -->
-        <div class="flex flex-col items-center justify-center gap-1 flex-none sm:flex-1 max-w-xl">
+        <div v-if="isAdmin" class="flex flex-col items-center justify-center gap-1 flex-none sm:flex-1 max-w-xl">
           <div class="flex items-center gap-2 sm:gap-3">
             <button 
               @click="cyclePlaybackMode"
@@ -123,7 +123,7 @@
             {{ formattedCurrentTime }} / {{ formattedDuration }}
           </span>
 
-          <div class="flex items-center gap-2 group/volume hidden sm:flex">
+          <div v-if="isAdmin" class="flex items-center gap-2 group/volume hidden sm:flex">
             <button 
               @click="toggleMute"
               class="p-1.5 text-gray-500 hover:text-gray-800 transition-colors"
@@ -156,12 +156,13 @@
           
           <button
             class="p-2 text-gray-500 hover:text-gray-900 transition-colors border-l border-gray-200 pl-4 ml-1 hidden sm:block"
+            v-if="isAdmin"
             @click="toggleFxPanel"
           >
             <MoreHorizontal :size="20" />
           </button>
 
-          <div v-if="showFxPanel" class="theme-floating-panel absolute bottom-full right-4 mb-3 w-80 bg-white border border-gray-200 rounded-xl shadow-xl p-4">
+          <div v-if="isAdmin && showFxPanel" class="theme-floating-panel absolute bottom-full right-4 mb-3 w-80 bg-white border border-gray-200 rounded-xl shadow-xl p-4">
             <div class="flex items-center justify-between mb-3">
               <div class="text-sm font-semibold text-gray-900">音效</div>
               <button class="p-1 text-gray-400 hover:text-gray-700" @click="showFxPanel = false">✕</button>
@@ -279,6 +280,7 @@ import {
   Maximize2,
 } from 'lucide-vue-next'
 import { apiGet, apiPost, apiPut } from '../api'
+import { isAdmin } from '../auth'
 import { isFavoriteSong, toggleFavoriteSong } from '../utils/favorites'
 
 const router = useRouter()
@@ -730,6 +732,7 @@ function updatePollInterval(wasPlaying: boolean, previousTrackId: number | undef
 }
 
 async function handleTrackEnd() {
+  if (!isAdmin.value) return
   try {
     if (playerState.value.repeatMode === 'one') {
       // Repeat current track

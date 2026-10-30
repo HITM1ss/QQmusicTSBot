@@ -6,6 +6,8 @@ System settings include frontend/backend build versions, stable-release checks, 
 
 Music authorization automatically probes a Jay Chou track after QR login and offers a manual verification button. Settings display the last result and timestamp; a preview URL is not accepted as a successful probe.
 
+The login page offers administrator and guest access. Guests can search, browse playlists, keep local favorites, view playback/history, and enqueue songs without interrupting playback. Settings, QQ Music authorization, updates, queue editing, and global playback controls are restricted by both the UI and backend. Guest sessions use HttpOnly cookies, last seven days, and support logout or switching to administrator login. Browser writes include the session CSRF token; API tokens belong only in trusted external clients.
+
 ## Features
 
 - 🎵 **Modern Music Player**: Full-featured player with playback controls, progress bar, and volume control

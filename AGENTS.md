@@ -9,6 +9,8 @@
 
 当前音乐源仅为 QQ 音乐。新增点歌、搜索或歌单逻辑应复用 `backend/qqmusic.py`，并使用 `qqmusic:<song_mid>` 作为曲目 ID；不要重新引入已退役音乐源的依赖、路由或界面。
 
+网页区分管理员与访客会话；新增路由必须同步检查 `backend/auth.py` 的访客白名单与前端权限。访客仅可浏览和加入 QQ 音乐队列，管理设置、授权、更新与全局播放控制必须验证管理员身份；网页写操作验证 CSRF。`/external/*` 始终要求已配置的 Token，兼容 Bearer 与 `x-api-token`，不要把 Token 打包到共享前端。
+
 ## 构建、测试与开发命令
 
 - `make backend-setup`：创建 `backend/.venv` 并安装 Python 依赖。

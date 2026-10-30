@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { LockKeyhole, LogIn, Music } from 'lucide-vue-next'
-import { login } from '../auth'
+import { LockKeyhole, LogIn, Music, UserRound } from 'lucide-vue-next'
+import { login, loginAsGuest } from '../auth'
 import { appConfig } from '../appConfig'
 
 const route = useRoute()
@@ -11,6 +11,20 @@ const username = ref('admin')
 const password = ref('')
 const error = ref('')
 const submitting = ref(false)
+const guestSubmitting = ref(false)
+
+async function enterAsGuest() {
+  error.value = ''
+  guestSubmitting.value = true
+  try {
+    await loginAsGuest()
+    await router.replace('/search')
+  } catch (e: any) {
+    error.value = String(e?.message || e)
+  } finally {
+    guestSubmitting.value = false
+  }
+}
 
 async function submit() {
   error.value = ''
@@ -56,11 +70,19 @@ async function submit() {
           </div>
         </label>
         <p v-if="error" class="text-sm text-red-600" role="alert">{{ error }}</p>
-        <button type="submit" class="btn-primary w-full justify-center" :disabled="submitting">
+        <button type="submit" class="btn-primary w-full justify-center" :disabled="submitting || guestSubmitting">
           <LogIn :size="18" />
           {{ submitting ? '正在登录' : '登录' }}
         </button>
       </form>
+
+      <div class="mt-6 pt-5 border-t border-gray-100">
+        <button type="button" class="btn-secondary w-full justify-center" :disabled="submitting || guestSubmitting" @click="enterAsGuest">
+          <UserRound :size="18" />
+          {{ guestSubmitting ? '正在进入' : '访客登录' }}
+        </button>
+        <p class="mt-2 text-xs leading-5 text-gray-500">无需账号，可搜索歌曲、浏览歌单并加入点歌队列。后台设置仅对管理员开放。</p>
+      </div>
 
       <p class="mt-6 pt-5 border-t border-gray-100 text-xs leading-5 text-gray-500">
         首次启动密码记录在后端启动日志和受保护的初始密码文件中。

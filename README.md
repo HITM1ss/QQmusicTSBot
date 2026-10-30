@@ -38,6 +38,8 @@ make all
 
 首次启动后，后端会生成一次性管理员密码并写入 logs/initial-admin-password.txt。登录 Web 后请立即修改密码，并在“系统配置 → 音乐会员登录”完成 QQ 音乐扫码或填写 Cookie。
 
+登录页也可选择“访客登录”，无需账号即可搜索、浏览歌单、收藏并加入点歌队列。访客可查看当前播放和历史，不能修改设置、QQ 音乐授权、更新程序，也不能立即播放、插队、删除队列或调整全局播放控制。管理员登录后才显示这些操作。
+
 本地开发可分别启动三个服务：
 
 ~~~bash
@@ -103,7 +105,7 @@ TeamSpeak 聊天支持以下常用命令：
 
 ## 外部 API
 
-配置 TSBOT_API_TOKEN 或 TSBOT_API_TOKENS 后，/external/* 接口需要 Authorization: Bearer token 或 x-api-token 请求头。
+使用 /external/* 前必须配置 TSBOT_API_TOKEN 或 TSBOT_API_TOKENS，接口接受 Authorization: Bearer token 或 x-api-token 请求头。未配置 Token 时拒绝外部 API 请求，避免绕过访客权限。Token 仅供受信任的外部客户端使用，不应写入前端构建。
 
 - GET /external/status：读取状态与队列预览
 - GET /external/search?source=qqmusic&keywords=稻香：搜索 QQ 音乐
@@ -125,6 +127,8 @@ backend/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ## 升级说明
 
 升级到当前版本时，已退役来源遗留在播放队列中的项目会在后端启动时自动移除，避免阻塞后续播放。旧历史记录不会再被重新点播；建议在确认升级成功后按需清理。
+
+访客功能会自动新增 guest_sessions 表，不改动原有管理员账号、QQ 音乐 Cookie 和队列。网页访问需先登录管理员或选择访客，访客会话有效期为 7 天，退出后立即失效；网页写操作需要对应会话的 CSRF 令牌。原先未配置 Token 的外部 API 客户端需先在设置中配置 Token，再携带 Token 调用。
 
 ## 安全
 

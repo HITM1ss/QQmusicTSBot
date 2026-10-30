@@ -4,19 +4,22 @@ from datetime import datetime, timedelta
 import hashlib
 import hmac
 import os
+import re
 from pathlib import Path
 import secrets
 
-from fastapi import HTTPException, Request, Response
+from fastapi import Depends, HTTPException, Request, Response
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from .config import settings
+from .db import get_session
 from .logger import logger
-from .models import AdminCredential, AdminSession
+from .models import AdminCredential, AdminSession, GuestSession
 
 
 SESSION_COOKIE = "tsbot_admin_session"
+GUEST_COOKIE = "tsbot_guest_session"
 SESSION_DAYS = 7
 PBKDF2_ITERATIONS = 600_000
 
@@ -113,11 +116,11 @@ def create_session(session: Session, credential: AdminCredential) -> tuple[str, 
     return raw_token, row
 
 
-def set_session_cookie(response: Response, raw_token: str, request: Request) -> None:
+def set_session_cookie(response: Response, raw_token: str, request: Request, *, cookie_name: str = SESSION_COOKIE) -> None:
     forwarded = (request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
     secure = request.url.scheme == "https" or forwarded == "https"
     response.set_cookie(
-        SESSION_COOKIE,
+        cookie_name,
         raw_token,
         max_age=SESSION_DAYS * 24 * 3600,
         httponly=True,
@@ -127,8 +130,65 @@ def set_session_cookie(response: Response, raw_token: str, request: Request) -> 
     )
 
 
-def clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(SESSION_COOKIE, path="/", samesite="strict")
+def clear_session_cookie(response: Response, *, cookie_name: str = SESSION_COOKIE) -> None:
+    response.delete_cookie(cookie_name, path="/", samesite="strict")
+
+
+def create_guest_session(session: Session) -> tuple[str, GuestSession]:
+    session.execute(delete(GuestSession).where(GuestSession.expires_at <= _now()))
+    raw_token = secrets.token_urlsafe(32)
+    row = GuestSession(
+        token_hash=_token_hash(raw_token),
+        csrf_token=secrets.token_urlsafe(24),
+        expires_at=_now() + timedelta(days=SESSION_DAYS),
+    )
+    session.add(row)
+    session.commit()
+    return raw_token, row
+
+
+def get_web_session(request: Request, session: Session, *, allow_password_change: bool = False) -> tuple[str, AdminSession | GuestSession]:
+    if request.cookies.get(SESSION_COOKIE):
+        try:
+            credential, row = get_admin_session(request, session)
+        except HTTPException:
+            pass
+        else:
+            if credential.must_change_password and not allow_password_change:
+                raise HTTPException(status_code=403, detail="首次登录必须先修改密码")
+            return "admin", row
+    raw_token = request.cookies.get(GUEST_COOKIE, "")
+    row = session.get(GuestSession, _token_hash(raw_token)) if raw_token else None
+    if row is None or row.expires_at <= _now():
+        raise HTTPException(status_code=401, detail="请先登录或选择访客登录")
+    return "guest", row
+
+
+async def authorize_web_request(request: Request, session: Session = Depends(get_session)) -> None:
+    """Enforce browser permissions at the HTTP boundary; external API keeps its token policy."""
+    path = request.url.path.rstrip("/") or "/"
+    method = request.method
+    if method == "OPTIONS" or path == "/external" or path.startswith("/external/"):
+        return
+    if (method == "GET" and (path in {"/auth/status", "/config/public"} or path.startswith("/assets/"))) or (
+        method == "POST" and path in {"/auth/login", "/auth/guest"}
+    ):
+        return
+    role, row = get_web_session(request, session, allow_password_change=path in {"/auth/change-password", "/auth/logout"})
+    request.state.web_role = role
+    if role == "guest":
+        read_allowed = method == "GET" and (
+            path in {"/queue", "/history", "/voice/status"}
+            or re.fullmatch(r"/lyrics/\d+", path)
+            or re.fullmatch(r"/qqmusic/(?:search(?:/songs|/playlists)?|playlist/[^/]+(?:/songs|/name)?|album/[^/]+(?:/name|/cover)?|singer/[^/]+|mv/[^/]+|song/[^/]+/lyric)", path)
+        )
+        write_allowed = method == "POST" and (
+            path in {"/queue/qqmusic", "/auth/logout"} or re.fullmatch(r"/history/\d+/replay", path)
+        )
+        if not read_allowed and not write_allowed:
+            raise HTTPException(status_code=403, detail="此操作仅限管理员")
+    if method not in {"GET", "HEAD", "OPTIONS"}:
+        require_csrf(request, row)
 
 
 def get_admin_session(request: Request, session: Session) -> tuple[AdminCredential, AdminSession]:
@@ -157,7 +217,7 @@ def require_admin(request: Request, session: Session, *, allow_password_change: 
     return credential, admin_session
 
 
-def require_csrf(request: Request, admin_session: AdminSession) -> None:
+def require_csrf(request: Request, admin_session: AdminSession | GuestSession) -> None:
     provided = request.headers.get("x-csrf-token", "")
     if not provided or not hmac.compare_digest(provided, admin_session.csrf_token):
         raise HTTPException(status_code=403, detail="无效的 CSRF 令牌")

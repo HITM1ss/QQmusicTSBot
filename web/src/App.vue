@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { authState, isAdmin, logout } from './auth'
 import MusicPlayer from './components/MusicPlayer.vue'
 import { appConfig } from './appConfig'
 import { applyTheme, getInitialTheme } from './theme'
@@ -15,6 +16,9 @@ import {
   Github,
   Moon,
   Sun,
+  LogIn,
+  LogOut,
+  UserRound,
   Menu,
   X
 } from 'lucide-vue-next'
@@ -25,8 +29,20 @@ const themeMode = ref<'light' | 'dark'>(getInitialTheme())
 const isDarkMode = computed(() => themeMode.value === 'dark')
 
 const route = useRoute()
+const router = useRouter()
+const sessionError = ref('')
 const isLyricsRoute = computed(() => route.name === 'lyrics' || route.path.startsWith('/lyrics'))
 const isAuthRoute = computed(() => Boolean(route.meta.authPage))
+
+async function signOut() {
+  sessionError.value = ''
+  try {
+    await logout()
+    await router.replace('/login')
+  } catch (e: any) {
+    sessionError.value = String(e?.message || e)
+  }
+}
 
 function toggleSidebar() {
   sidebarOpen.value = !sidebarOpen.value
@@ -39,7 +55,7 @@ function toggleTheme() {
 </script>
 
 <template>
-  <div :class="['app-shell min-h-screen transition-colors duration-300', isLyricsRoute ? 'bg-black h-[100dvh] overflow-hidden' : isAuthRoute ? 'bg-gray-50' : 'bg-gray-50 pb-24']">
+  <div :class="['app-shell transition-colors duration-300', isLyricsRoute ? 'bg-black h-[100dvh] overflow-hidden' : isAuthRoute ? 'bg-gray-50 min-h-screen' : 'bg-gray-50 h-[100dvh] overflow-hidden pb-[calc(5rem+1px)]']">
     <RouterView v-if="isAuthRoute" />
     <template v-if="isLyricsRoute">
       <div class="h-full relative z-0">
@@ -64,7 +80,7 @@ function toggleTheme() {
       <!-- Sidebar -->
       <aside 
         :class="[
-          'theme-sidebar-shell fixed top-0 left-0 h-full w-64 bg-white/95 backdrop-blur-sm border-r border-gray-200 z-50 transform transition-transform duration-300 ease-out shadow-[4px_0_24px_rgba(0,0,0,0.02)]',
+          'theme-sidebar-shell fixed top-0 left-0 h-full w-64 pb-[calc(5rem+1px)] bg-white/95 backdrop-blur-sm border-r border-gray-200 z-50 transform transition-transform duration-300 ease-out shadow-[4px_0_24px_rgba(0,0,0,0.02)]',
           sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         ]"
       >
@@ -143,7 +159,9 @@ function toggleTheme() {
           
           <!-- User/Settings Footer -->
           <div class="theme-sidebar-footer p-4 border-t border-gray-100 bg-gray-50/50">
+            <p class="px-3 mb-2 text-xs text-gray-500">{{ isAdmin ? `管理员 · ${authState.username}` : '访客点歌' }}</p>
             <RouterLink 
+              v-if="isAdmin"
               to="/settings"
               class="nav-item"
               active-class="nav-item-active"
@@ -151,12 +169,22 @@ function toggleTheme() {
               <Settings :size="20" />
               <span>设置</span>
             </RouterLink>
+            <RouterLink v-else to="/login" class="nav-item">
+              <LogIn :size="20" />
+              <span>管理员登录</span>
+            </RouterLink>
+            <button type="button" class="nav-item w-full" @click="signOut">
+              <LogOut :size="20" />
+              <span>{{ isAdmin ? '退出登录' : '退出访客' }}</span>
+            </button>
+            <p v-if="sessionError" class="px-3 text-xs text-red-600" role="alert">{{ sessionError }}</p>
           </div>
         </div>
       </aside>
       
       <!-- Main content -->
-      <div class="lg:ml-64 flex flex-col h-[100dvh]">
+      <!-- Keep the content and fixed player's 5rem + border within one viewport. -->
+      <div class="lg:ml-64 flex flex-col h-full min-h-0">
         <!-- Top bar -->
         <header class="theme-topbar-shell bg-white border-b border-gray-200 px-4 md:px-6 py-3 md:py-4 flex-shrink-0 flex items-center justify-between">
           <div class="flex items-center gap-4">
@@ -166,6 +194,7 @@ function toggleTheme() {
             >
               <Menu :size="20" />
             </button>
+            <span v-if="!isAdmin" class="flex items-center gap-2 text-sm text-gray-500"><UserRound :size="16" />访客点歌</span>
           </div>
           
           <div class="flex items-center gap-2">
@@ -191,6 +220,7 @@ function toggleTheme() {
               <Sun v-else :size="20" />
             </button>
             <RouterLink
+              v-if="isAdmin"
               to="/settings"
               class="theme-toolbar-btn p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
               title="设置"
