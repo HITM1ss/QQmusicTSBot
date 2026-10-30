@@ -408,7 +408,7 @@ onBeforeUnmount(() => {
                 <template v-else>
                   <p v-if="logPayload?.message" class="mb-3 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">{{ logPayload.message }}</p>
                   <pre class="min-h-72 overflow-x-auto rounded-md bg-slate-950 p-4 text-xs leading-5 text-slate-100 whitespace-pre-wrap break-words font-mono">{{ logPayload?.content || '暂无可显示日志。' }}</pre>
-                  <p v-if="logPayload" class="mt-3 text-xs text-gray-400">已读取 {{ logPayload.line_count }} 行；日志中的密码、Cookie 和 Token 会自动隐藏。</p>
+                  <p v-if="logPayload" class="mt-3 text-xs text-gray-400">已读取 {{ logPayload.line_count }} 行；新日志使用北京时间（UTC+8），旧版机器人日志保留原时间。密码、Cookie 和 Token 会自动隐藏。</p>
                 </template>
               </div>
             </section>

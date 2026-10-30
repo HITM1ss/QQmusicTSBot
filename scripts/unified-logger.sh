@@ -16,7 +16,7 @@ format_log() {
     local color="$2"
     
     while IFS= read -r line; do
-        timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+        timestamp=$(TZ=UTC-8 date '+%Y-%m-%d %H:%M:%S')
         if [[ -t 1 ]]; then
             # 终端输出带颜色
             echo -e "\033[${color}m[${timestamp}] [INFO] [${component}]\033[0m ${line}"

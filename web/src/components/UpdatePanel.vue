@@ -7,7 +7,10 @@ const frontend = __TSBOT_BUILD_INFO__
 const backend = ref<{ version: string; revision: string } | null>(null)
 const latest = ref<{ version: string; url: string } | null>(null)
 const updateAvailable = ref<boolean | null>(null)
-const updater = ref<{ available: boolean; state: string; message: string; version?: string; progress?: number | null } | null>(null)
+type ImageSource = 'ghcr' | 'nju'
+const imageSource = ref<ImageSource>('ghcr')
+const sourceLabel = computed(() => imageSource.value === 'ghcr' ? '原地址（GHCR）' : '南大源')
+const updater = ref<{ available: boolean; state: string; message: string; version?: string; progress?: number | null; image_source?: ImageSource } | null>(null)
 const checking = ref(false)
 const submitting = ref(false)
 const error = ref('')
@@ -32,6 +35,10 @@ async function refresh() {
     error.value = ''
   } else if (!updating.value) error.value = '无法读取后端版本，请检查服务连接'
   if (results[1].status === 'fulfilled') {
+    const status = results[1].value
+    if (status.image_source && ['pending', 'running'].includes(status.state)) {
+      imageSource.value = status.image_source
+    }
     updater.value = results[1].value
     if (['pending', 'running'].includes(updater.value.state)) scheduleRefresh()
   }
@@ -66,13 +73,13 @@ async function checkUpdate() {
 }
 
 async function startUpdate() {
-  if (!window.confirm(`更新到 ${latest.value?.version}？更新前会备份数据库，服务将短暂中断。`)) return
+  if (!window.confirm(`从${sourceLabel.value}更新到 ${latest.value?.version}？更新前会备份数据库，服务将短暂中断。`)) return
   submitting.value = true
   error.value = ''
   try {
-    const result = await apiPost<{ version: string }>('/admin/update', { version: latest.value?.version })
+    const result = await apiPost<{ version: string; image_source: ImageSource }>('/admin/update', { version: latest.value?.version, image_source: imageSource.value })
     refreshDeadline = 0
-    updater.value = { available: true, state: 'pending', message: '更新请求已提交', version: result.version }
+    updater.value = { available: true, state: 'pending', message: '更新请求已提交', version: result.version, image_source: result.image_source }
     scheduleRefresh()
   } catch (e: any) {
     error.value = String(e?.message || e)
@@ -108,6 +115,18 @@ onUnmounted(() => { alive = false; window.clearTimeout(timer) })
       <p v-if="updater" class="text-sm" :class="updater.state === 'failed' ? 'text-red-600' : 'text-gray-500'">{{ updater.message }}<span v-if="updater.version">（{{ updater.version }}）</span><span v-if="updater.progress != null">...{{ updater.progress }}%</span></p>
       <p v-if="updater && !updater.available" class="text-xs text-gray-500">在 Linux 宿主机的部署目录运行 sudo bash scripts/install-updater.sh，完成一次性安装后即可使用一键更新。</p>
       <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
+      <fieldset :disabled="updating" class="space-y-2">
+        <legend class="mb-2 text-sm font-medium text-gray-700">从何处拉取镜像</legend>
+        <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+          <input v-model="imageSource" type="radio" name="update-image-source" value="ghcr" class="h-4 w-4 accent-blue-600" />
+          <span>原地址（GHCR）</span>
+        </label>
+        <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+          <input v-model="imageSource" type="radio" name="update-image-source" value="nju" class="h-4 w-4 accent-blue-600" />
+          <span>南大源</span>
+        </label>
+        <p class="text-xs text-gray-500">{{ imageSource === 'ghcr' ? '拉取失败或超过 10 分钟后自动改用南大源。' : '本次更新直接从南大源拉取镜像。' }}</p>
+      </fieldset>
       <div class="flex flex-wrap gap-3">
         <button class="btn-secondary" :disabled="checking || updating" @click="checkUpdate">{{ checking ? '正在检查…' : '检查更新' }}</button>
         <button class="btn-primary" :disabled="!updater?.available || !updateAvailable || updating" @click="startUpdate">{{ updating ? '正在更新…' : '一键更新' }}</button>

@@ -5,14 +5,20 @@ use std::{
 };
 use tracing::{Event, Subscriber};
 use tracing_subscriber::{
-    fmt::{format::Writer, FmtContext, FormatEvent, FormatFields},
     fmt::writer::MakeWriterExt,
+    fmt::{format::Writer, FmtContext, FormatEvent, FormatFields},
     registry::LookupSpan,
     EnvFilter,
 };
 
 /// TSBot 统一日志格式化器
 pub struct TSBotFormatter;
+
+fn beijing_timestamp(now: chrono::DateTime<chrono::Utc>) -> String {
+    now.with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string()
+}
 
 impl<S, N> FormatEvent<S, N> for TSBotFormatter
 where
@@ -26,32 +32,34 @@ where
         event: &Event<'_>,
     ) -> std::fmt::Result {
         // 获取时间戳
-        let now = chrono::Local::now();
-        let timestamp = now.format("%Y-%m-%d %H:%M:%S");
-        
+        let timestamp = beijing_timestamp(chrono::Utc::now());
+
         // 获取日志级别
         let level = event.metadata().level();
-        
+
         // 写入统一格式: [时间] [级别] [组件] 消息
         write!(writer, "[{}] [{}] [voice] ", timestamp, level)?;
-        
+
         // 写入消息内容
         ctx.field_format().format_fields(writer.by_ref(), event)?;
-        
+
         writeln!(writer)
     }
 }
 
 fn open_log_file() -> Option<std::fs::File> {
-    let configured = std::env::var("TSBOT_VOICE_LOG_FILE")
-        .unwrap_or_else(|_| "./logs/voice.log".to_string());
+    let configured =
+        std::env::var("TSBOT_VOICE_LOG_FILE").unwrap_or_else(|_| "./logs/voice.log".to_string());
     let path = Path::new(configured.trim());
     if path.as_os_str().is_empty() {
         return None;
     }
     if let Some(parent) = path.parent() {
         if let Err(error) = fs::create_dir_all(parent) {
-            eprintln!("[voice] cannot create log directory {}: {error}", parent.display());
+            eprintln!(
+                "[voice] cannot create log directory {}: {error}",
+                parent.display()
+            );
             return None;
         }
     }
@@ -67,11 +75,15 @@ fn open_log_file() -> Option<std::fs::File> {
 /// 初始化统一日志配置
 pub fn init_logger() {
     use tracing_subscriber::fmt;
-    
+
     let log_level = std::env::var("TSBOT_LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
     let log_level = log_level.trim().to_lowercase();
-    let log_level = if log_level.is_empty() { "info".to_string() } else { log_level };
-    
+    let log_level = if log_level.is_empty() {
+        "info".to_string()
+    } else {
+        log_level
+    };
+
     let builder = fmt()
         .event_format(TSBotFormatter)
         .with_env_filter(EnvFilter::new(format!("voice_service={}", log_level)));
@@ -80,5 +92,22 @@ pub fn init_logger() {
         builder.with_writer(io::stdout.and(file)).init();
     } else {
         builder.with_writer(io::stdout).init();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::beijing_timestamp;
+
+    #[test]
+    fn timestamp_uses_beijing_time_at_epoch_and_across_midnight() {
+        for (epoch, expected) in [
+            (0, "1970-01-01 08:00:00"),
+            (57_600, "1970-01-02 00:00:00"),
+            (-28_801, "1969-12-31 23:59:59"),
+        ] {
+            let now = chrono::DateTime::from_timestamp(epoch, 0).unwrap();
+            assert_eq!(beijing_timestamp(now), expected);
+        }
     }
 }

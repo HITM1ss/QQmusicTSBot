@@ -10,17 +10,53 @@ import re
 import selectors
 import shutil
 import signal
+import socket
 import sqlite3
+import struct
 import subprocess
 import sys
 import tempfile
 import time
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 
 SERVICES = ("voice-service", "backend", "web")
 IMAGE_PREFIX = "ghcr.io/hitm1ss/qqmusictsbot"
 MIRROR_IMAGE_PREFIX = "ghcr.nju.edu.cn/hitm1ss/qqmusictsbot"
 PULL_TIMEOUT_SECONDS = 600
+NTP_SERVER = "ntp.aliyun.com"
+NTP_UNIX_OFFSET = 2_208_988_800
+
+
+def network_time() -> float:
+    """Fetch one SNTP sample, accounting for the round trip and server processing."""
+    packet = bytearray(48)
+    packet[0] = 0x23  # NTP v4, client mode.
+    sent_time = time.time() + NTP_UNIX_OFFSET
+    packet[40:48] = struct.pack("!II", int(sent_time), int((sent_time % 1) * 2**32))
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as connection:
+        connection.settimeout(5)
+        connection.connect((NTP_SERVER, 123))
+        started = time.monotonic()
+        connection.send(packet)
+        response = connection.recv(48)
+        elapsed = time.monotonic() - started
+    if len(response) != 48 or response[0] & 7 != 4 or response[0] >> 6 == 3 or not 1 <= response[1] <= 15:
+        raise ValueError("NTP 服务未返回有效的已同步时间")
+    if response[24:32] != packet[40:48]:
+        raise ValueError("NTP 响应与本次请求不匹配")
+    received_seconds, received_fraction, sent_seconds, sent_fraction = struct.unpack("!IIII", response[32:48])
+    if not received_seconds or not sent_seconds:
+        raise ValueError("NTP 时间戳为空")
+    received = received_seconds - NTP_UNIX_OFFSET + received_fraction / 2**32
+    sent = sent_seconds - NTP_UNIX_OFFSET + sent_fraction / 2**32
+    return (received + sent + elapsed) / 2
+
+
+def sync_host_time() -> str:
+    timestamp = network_time()
+    time.clock_settime(time.CLOCK_REALTIME, timestamp)
+    return datetime.fromtimestamp(timestamp, timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
 
 
 class ImagePullError(RuntimeError):
@@ -124,6 +160,7 @@ class Updater:
     def __init__(self, config: dict):
         self.project = Path(config["project"])
         self.directory = self.project / "data" / "updater"
+        self.image_source = "ghcr"
         self.compose = ["docker", "compose", "--project-directory", str(self.project), "--project-name", config["name"], "-f", str(self.project / "docker-compose.prebuilt.yml")]
 
     def command(self, args: list[str], env: dict | None = None, timeout: float = 600, on_line: Callable[[str], None] | None = None) -> str:
@@ -184,24 +221,29 @@ class Updater:
         self.status("running", message, version, progress=100)
 
     def pull_images(self, version: str, environment: dict) -> str:
+        registry = {"ghcr": "ghcr.io", "nju": "ghcr.nju.edu.cn"}[self.image_source]
+        message = "正在从南大源拉取更新镜像"
+        if registry == "ghcr.io":
+            try:
+                self.pull_with_progress(version, environment)
+                return "GHCR"
+            except (RuntimeError, subprocess.TimeoutExpired) as exc:
+                reason = "超时（10 分钟）" if isinstance(exc, subprocess.TimeoutExpired) else "失败"
+                registry = "ghcr.nju.edu.cn"
+                message = f"GHCR 拉取{reason}，正在从南大源拉取更新镜像"
         try:
-            self.pull_with_progress(version, environment)
-            return "GHCR"
-        except (RuntimeError, subprocess.TimeoutExpired) as exc:
-            reason = "超时（10 分钟）" if isinstance(exc, subprocess.TimeoutExpired) else "失败"
-        try:
-            self.pull_with_progress(version, {**environment, "TSBOT_IMAGE_REGISTRY": "ghcr.nju.edu.cn"},
-                                    f"GHCR 拉取{reason}，正在从南大源拉取更新镜像")
+            self.pull_with_progress(version, {**environment, "TSBOT_IMAGE_REGISTRY": registry}, message)
             # Keep Compose and the saved registry settings unchanged. Retag only after
             # every mirror image is present; container recreation uses --pull never.
             for service in SERVICES:
                 self.command(["docker", "image", "tag", f"{MIRROR_IMAGE_PREFIX}-{service}:{version}", f"{IMAGE_PREFIX}-{service}:{version}"], timeout=30)
             return "南大源"
         except (RuntimeError, subprocess.TimeoutExpired) as exc:
-            raise ImagePullError("GHCR 和南大源均拉取失败，未停止服务或切换版本") from exc
+            source = "南大源" if self.image_source == "nju" else "GHCR 和南大源均"
+            raise ImagePullError(f"{source}拉取失败，未停止服务或切换版本") from exc
 
     def status(self, state: str, message: str, version: str = "", *, progress: int | None = None) -> None:
-        atomic_write(self.directory / "status.json", json.dumps({"state": state, "message": message, "version": version, "progress": progress}, ensure_ascii=False), 0o644)
+        atomic_write(self.directory / "status.json", json.dumps({"state": state, "message": message, "version": version, "progress": progress, "image_source": self.image_source}, ensure_ascii=False), 0o644)
         print(f"{state}: {message}" + (f" {progress}%" if progress is not None else ""), flush=True)
 
     def inspect_services(self) -> dict[str, dict]:
@@ -235,6 +277,7 @@ class Updater:
             try:
                 payload = json.loads(request.read_text(encoding="utf-8"))
                 version = payload["version"]
+                self.image_source = payload.get("image_source", "ghcr")
                 target = version_tuple(version)
                 self.status("running", "正在检查部署", version)
                 containers = self.inspect_services()
@@ -310,6 +353,9 @@ class Updater:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--sync-time"]:
+        print(f"北京时间已校准：{sync_host_time()}（UTC+8，来源 {NTP_SERVER}）")
+        sys.exit(0)
     config = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     updater = Updater(config)
     if "--finalize" in sys.argv[2:]:
@@ -319,6 +365,7 @@ if __name__ == "__main__":
             state = {}
         if state.get("state") == "running":
             (updater.directory / "request.json").unlink(missing_ok=True)
+            updater.image_source = state.get("image_source", "ghcr")
             updater.status("failed", "更新服务异常中断，请查看宿主机日志", state.get("version", ""))
     else:
         updater.run()

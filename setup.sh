@@ -114,6 +114,11 @@ fi
 mkdir -p logs
 
 log "=== Setup complete ==="
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    if ! sudo "$PYTHON_CMD" scripts/compose-updater.py --sync-time; then
+        warn "Network time synchronization failed; check access to ntp.aliyun.com:123/UDP."
+    fi
+fi
 log "Next steps:"
 log "  1) Edit $ENV_FILE with your TeamSpeak settings and music source config"
 log "  2) Start services:"

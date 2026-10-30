@@ -72,7 +72,7 @@ class AdminLogTests(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 main,
                 "query_server_logs",
-                AsyncMock(return_value=["2026-08-23 INFO token=secret-token"]),
+                AsyncMock(return_value=["2026-08-23 10:15:00.123456|INFO|token=secret-token"]),
             ) as query_logs,
         ):
             result = await main.admin_logs("teamspeak", object(), lines=200, session=session)
@@ -80,6 +80,7 @@ class AdminLogTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("teamspeak", result["source"])
         self.assertEqual(1, result["line_count"])
         self.assertIn("token=[已隐藏]", result["content"])
+        self.assertIn("2026-08-23 18:15:00.123456|INFO|", result["content"])
         query_logs.assert_awaited_once()
 
     def test_serverquery_logview_rows_are_unescaped_and_chronological(self) -> None:

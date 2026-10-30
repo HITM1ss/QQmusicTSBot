@@ -218,6 +218,8 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
+          provenance: false
+          sbom: false
           build-args: |
             TSBOT_BUILD_VERSION=${{ needs.prepare_release.outputs.release_tag || 'development' }}
             TSBOT_BUILD_REVISION=${{ github.sha }}

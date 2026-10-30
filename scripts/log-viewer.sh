@@ -92,7 +92,7 @@ format_log_line() {
         echo -e "${color}${line}${NC}"
     else
         # 否则添加统一格式
-        timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+        timestamp=$(TZ=UTC-8 date '+%Y-%m-%d %H:%M:%S')
         echo -e "${color}[${timestamp}] [INFO] [${component}] ${line}${NC}"
     fi
 }

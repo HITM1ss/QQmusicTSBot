@@ -57,4 +57,10 @@ service_content, path_content = module.systemd_unit_contents(project, name, work
 (units / f'{unit}.path').write_text(path_content)
 module.activate_systemd_updater(worker, unit, units)
 print(f'更新服务已安装。查看日志：journalctl -u {unit}.service')
+try:
+    synchronized = module.sync_host_time()
+except (OSError, ValueError) as exc:
+    print(f'网络校时失败：{exc}；请检查宿主机到 {module.NTP_SERVER}:123/UDP 的连接。', file=sys.stderr)
+else:
+    print(f'北京时间已校准：{synchronized}（UTC+8，来源 {module.NTP_SERVER}）')
 PY

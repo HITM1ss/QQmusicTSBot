@@ -40,7 +40,7 @@ On first startup, the backend creates a one-time admin password in logs/initial-
 
 Choose **Guest login** on the sign-in page to search, browse playlists, save local favorites, and add songs to the queue without an account. Guests can view playback and history. Settings, music authorization, software updates, immediate playback, queue editing, and global player controls require an administrator.
 
-The update panel shows an estimated image-pull percentage from Docker Compose progress events. Update and reinstall the host updater scripts to enable collection; see [updater setup](docs/UPDATING.md).
+The update panel lets administrators choose GHCR or the NJU mirror for each update and shows an estimated image-pull percentage from Docker Compose progress events. GHCR remains the default with automatic NJU fallback; selecting NJU pulls directly from the mirror. Update and reinstall the host updater scripts to enable these features; see [updater setup](docs/UPDATING.md).
 
 For local development, run the services separately:
 
@@ -111,6 +111,10 @@ backend/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 ~~~
 
 ## Upgrade Notes
+
+New backend, Voice, and helper-script log entries use Beijing time (UTC+8). The log page converts TeamSpeak 3's default UTC timestamps to Beijing time; existing bot log files retain their original timestamps.
+
+After successful Linux setup or host-updater installation, one SNTP request to `ntp.aliyun.com` calibrates the host's system clock. The installer reports synchronization success or failure. Existing Linux deployments can run `sudo python3 scripts/compose-updater.py --sync-time`; allow outbound UDP 123. Containers need no additional clock-setting privileges.
 
 On startup, the backend removes queued entries from retired sources so they cannot block playback after an upgrade. Old history entries from retired sources cannot be replayed and may be removed when no longer needed.
 

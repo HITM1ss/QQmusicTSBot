@@ -12,6 +12,7 @@ import re
 import time
 import uuid
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -60,7 +61,7 @@ from .qqmusic import QQMusicClient, QQMusicLoginError
 from .serverquery import ServerQueryConfig, ServerQueryError, query_server_logs
 from .voice_client import VoiceClient, VoiceStatus
 from .config import settings
-from .logger import logger
+from .logger import logger, server_log_beijing_time
 from .version import build_info, latest_release, parse_version
 from .updates import submit_update, update_status
 
@@ -2601,6 +2602,7 @@ def admin_update_status(request: Request) -> dict:
 
 class SoftwareUpdateRequest(BaseModel):
     version: str
+    image_source: Literal["ghcr", "nju"] = "ghcr"
 
 
 @app.post("/admin/update")
@@ -2620,13 +2622,13 @@ async def admin_start_update(req: SoftwareUpdateRequest, request: Request) -> di
     if current is None or target is None or target <= current:
         raise HTTPException(status_code=409, detail="当前版本无法比较或已是最新版本")
     try:
-        submit_update(release["version"])
+        submit_update(release["version"], req.image_source)
     except (FileExistsError, RuntimeError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from None
     except OSError as exc:
         logger.warning("提交更新请求失败，异常类型 %s", type(exc).__name__)
         raise HTTPException(status_code=500, detail="无法提交更新请求，请检查宿主机更新服务") from None
-    return {"ok": True, "version": release["version"]}
+    return {"ok": True, "version": release["version"], "image_source": req.image_source}
 
 
 @app.get("/assets/{asset_key}")
@@ -2917,7 +2919,7 @@ async def admin_logs(
     return {
         "source": "teamspeak",
         "title": "TeamSpeak 服务器日志",
-        "content": _redact_log_secrets("\n".join(entries)),
+        "content": _redact_log_secrets("\n".join(server_log_beijing_time(entry) for entry in entries)),
         "line_count": len(entries),
         "message": "" if entries else "没有可显示的 TeamSpeak 服务器日志。",
     }

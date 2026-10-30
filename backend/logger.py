@@ -2,11 +2,26 @@
 统一日志配置模块
 """
 import logging
+import re
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 from .config import settings
+
+BEIJING_TIME = timezone(timedelta(hours=8))
+_SERVER_LOG_TIMESTAMP = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(\.\d+)?(?=\s|\||$)")
+
+
+def server_log_beijing_time(line: str) -> str:
+    """TeamSpeak 3 logview timestamps are UTC; convert only the record prefix."""
+    match = _SERVER_LOG_TIMESTAMP.match(line)
+    if not match:
+        return line
+    instant = datetime.fromisoformat(match[1]).replace(tzinfo=timezone.utc)
+    timestamp = instant.astimezone(BEIJING_TIME).strftime("%Y-%m-%d %H:%M:%S")
+    return timestamp + (match[2] or "") + line[match.end():]
 
 
 class TSBotFormatter(logging.Formatter):
@@ -16,6 +31,9 @@ class TSBotFormatter(logging.Formatter):
         # 统一日志格式: [时间] [级别] [组件] 消息
         fmt = "[%(asctime)s] [%(levelname)s] [backend] %(message)s"
         super().__init__(fmt, datefmt="%Y-%m-%d %H:%M:%S")
+
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
+        return datetime.fromtimestamp(record.created, BEIJING_TIME).strftime(datefmt or "%Y-%m-%d %H:%M:%S")
 
 
 def setup_logger(
