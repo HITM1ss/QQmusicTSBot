@@ -14,7 +14,7 @@ import { refreshAuth } from './auth'
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', redirect: '/search' },
+    { path: '/', redirect: '/playlists' },
     { path: '/search', component: SearchView },
     { path: '/likes', redirect: '/favorites' },
     { path: '/favorites', component: FavoritesView },

@@ -18,7 +18,7 @@ async function enterAsGuest() {
   guestSubmitting.value = true
   try {
     await loginAsGuest()
-    await router.replace('/search')
+    await router.replace('/playlists')
   } catch (e: any) {
     error.value = String(e?.message || e)
   } finally {
