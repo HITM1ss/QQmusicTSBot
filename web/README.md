@@ -4,6 +4,8 @@ A modern Vue.js frontend for the TSBot music player with comprehensive music man
 
 System settings include frontend/backend build versions, stable-release checks, and one-click updates for configured Linux/systemd Compose hosts. See [host updater setup](../docs/UPDATING.md). Vite injects `VITE_TSBOT_VERSION` and `VITE_TSBOT_REVISION` during builds and emits `version.json`; local development is labeled as a development build.
 
+During image pulls, the panel places the version before the host-reported percentage, for example `正在拉取更新镜像（v0.1.8）...23%`. The existing three-second status refresh carries progress for both GHCR and NJU; later update stages display their status text.
+
 Music authorization automatically probes a Jay Chou track after QR login and offers a manual verification button. Settings display the last result and timestamp; a preview URL is not accepted as a successful probe.
 
 The login page offers administrator and guest access. Guests can search, browse playlists, keep local favorites, view playback/history, and enqueue songs without interrupting playback. Settings, QQ Music authorization, updates, queue editing, and global playback controls are restricted by both the UI and backend. Guest sessions use HttpOnly cookies, last seven days, and support logout or switching to administrator login. Browser writes include the session CSRF token; API tokens belong only in trusted external clients.

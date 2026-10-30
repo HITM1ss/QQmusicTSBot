@@ -7,7 +7,7 @@ const frontend = __TSBOT_BUILD_INFO__
 const backend = ref<{ version: string; revision: string } | null>(null)
 const latest = ref<{ version: string; url: string } | null>(null)
 const updateAvailable = ref<boolean | null>(null)
-const updater = ref<{ available: boolean; state: string; message: string; version?: string } | null>(null)
+const updater = ref<{ available: boolean; state: string; message: string; version?: string; progress?: number | null } | null>(null)
 const checking = ref(false)
 const submitting = ref(false)
 const error = ref('')
@@ -105,7 +105,7 @@ onUnmounted(() => { alive = false; window.clearTimeout(timer) })
         最新稳定版：<a :href="latest.url" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline">{{ latest.version }}</a>
         <span class="ml-2">{{ updateAvailable === null ? '开发版无法自动比较版本' : updateAvailable ? '有可用更新' : '后端已是最新版本' }}</span>
       </p>
-      <p v-if="updater" class="text-sm" :class="updater.state === 'failed' ? 'text-red-600' : 'text-gray-500'">{{ updater.message }}<span v-if="updater.version">（{{ updater.version }}）</span></p>
+      <p v-if="updater" class="text-sm" :class="updater.state === 'failed' ? 'text-red-600' : 'text-gray-500'">{{ updater.message }}<span v-if="updater.version">（{{ updater.version }}）</span><span v-if="updater.progress != null">...{{ updater.progress }}%</span></p>
       <p v-if="updater && !updater.available" class="text-xs text-gray-500">在 Linux 宿主机的部署目录运行 sudo bash scripts/install-updater.sh，完成一次性安装后即可使用一键更新。</p>
       <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
       <div class="flex flex-wrap gap-3">

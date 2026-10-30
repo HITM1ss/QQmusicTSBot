@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
 import shutil
 import signal
 import sqlite3
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 
 SERVICES = ("voice-service", "backend", "web")
 IMAGE_PREFIX = "ghcr.io/hitm1ss/qqmusictsbot"
@@ -23,6 +25,31 @@ PULL_TIMEOUT_SECONDS = 600
 
 class ImagePullError(RuntimeError):
     """Both configured registries failed before any service was stopped."""
+
+
+class PullProgress:
+    def __init__(self):
+        self.layers: dict[str, dict[str, tuple[int, int]]] = {}
+        self.completed: set[str] = set()
+
+    def update(self, event: dict) -> int:
+        parent = event.get("parent_id")
+        phase = event.get("text")
+        if parent and phase == "Downloading" and event.get("total", 0) > 0:
+            self.layers.setdefault(parent, {})[event["id"]] = (event.get("current", 0), event["total"])
+        elif parent and phase in {"Download complete", "Verifying Checksum", "Extracting", "Pull complete"}:
+            layers = self.layers.get(parent, {})
+            if event["id"] in layers:
+                _, total = layers[event["id"]]
+                layers[event["id"]] = (total, total)
+        elif not parent and phase == "Pulled":
+            self.completed.add(event["id"])
+        downloaded = float(len(self.completed))
+        for image, layers in self.layers.items():
+            if image not in self.completed:
+                downloaded += sum(current for current, _ in layers.values()) / sum(total for _, total in layers.values())
+        # Each image contributes one third. Only a successful pull command reaches 100%.
+        return min(99, int(downloaded * 100 / len(SERVICES)))
 
 
 def systemd_unit_contents(project: Path, name: str, worker_path: Path, config_path: Path) -> tuple[str, str]:
@@ -99,10 +126,30 @@ class Updater:
         self.directory = self.project / "data" / "updater"
         self.compose = ["docker", "compose", "--project-directory", str(self.project), "--project-name", config["name"], "-f", str(self.project / "docker-compose.prebuilt.yml")]
 
-    def command(self, args: list[str], env: dict | None = None, timeout: float = 600) -> str:
-        with subprocess.Popen(args, cwd=self.project, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True) as process:
+    def command(self, args: list[str], env: dict | None = None, timeout: float = 600, on_line: Callable[[str], None] | None = None) -> str:
+        with subprocess.Popen(args, cwd=self.project, env=env, text=on_line is None, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT if on_line else subprocess.PIPE, start_new_session=True) as process:
             try:
-                output, _ = process.communicate(timeout=timeout)
+                if on_line is None:
+                    output, _ = process.communicate(timeout=timeout)
+                else:
+                    deadline = time.monotonic() + timeout
+                    pending = b""
+                    with selectors.DefaultSelector() as selector:
+                        selector.register(process.stdout, selectors.EVENT_READ)
+                        while True:
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0 or not selector.select(remaining):
+                                raise subprocess.TimeoutExpired(args, timeout)
+                            chunk = os.read(process.stdout.fileno(), 65536)
+                            if not chunk:
+                                break
+                            pending += chunk
+                            while b"\n" in pending:
+                                line, pending = pending.split(b"\n", 1)
+                                on_line(line.decode("utf-8"))
+                    process.wait(timeout=deadline - time.monotonic())
+                    output = ""
             except subprocess.TimeoutExpired:
                 # Compose can launch a CLI plugin child. Stop the whole client process group
                 # before trying another registry, rather than leaving an old pull running.
@@ -117,21 +164,34 @@ class Updater:
             raise RuntimeError(f"Command failed: {args[0]} (exit {process.returncode})")
         return output
 
+    def pull_with_progress(self, version: str, environment: dict, message: str = "正在拉取更新镜像") -> None:
+        progress = PullProgress()
+        previous = 0
+        self.status("running", message, version, progress=0)
+
+        def on_line(line: str) -> None:
+            nonlocal previous
+            # Compose can also emit plain-text warnings on its progress stream.
+            if not line.startswith("{"):
+                return
+            percent = progress.update(json.loads(line))
+            if percent != previous:
+                self.status("running", message, version, progress=percent)
+                previous = percent
+
+        self.command([*self.compose, "--progress", "json", "pull", *SERVICES], environment,
+                     timeout=PULL_TIMEOUT_SECONDS, on_line=on_line)
+        self.status("running", message, version, progress=100)
+
     def pull_images(self, version: str, environment: dict) -> str:
-        self.status("running", "正在从 GHCR 拉取镜像，最多等待 10 分钟", version)
         try:
-            self.command([*self.compose, "pull", *SERVICES], environment, timeout=PULL_TIMEOUT_SECONDS)
+            self.pull_with_progress(version, environment)
             return "GHCR"
         except (RuntimeError, subprocess.TimeoutExpired) as exc:
             reason = "超时（10 分钟）" if isinstance(exc, subprocess.TimeoutExpired) else "失败"
-            self.status("running", f"GHCR 拉取{reason}，自动切换南大源重试", version)
-        deadline = time.monotonic() + PULL_TIMEOUT_SECONDS
         try:
-            for service in SERVICES:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise subprocess.TimeoutExpired("NJU image pulls", PULL_TIMEOUT_SECONDS)
-                self.command(["docker", "pull", f"{MIRROR_IMAGE_PREFIX}-{service}:{version}"], timeout=remaining)
+            self.pull_with_progress(version, {**environment, "TSBOT_IMAGE_REGISTRY": "ghcr.nju.edu.cn"},
+                                    f"GHCR 拉取{reason}，正在从南大源拉取更新镜像")
             # Keep Compose and the saved registry settings unchanged. Retag only after
             # every mirror image is present; container recreation uses --pull never.
             for service in SERVICES:
@@ -140,9 +200,9 @@ class Updater:
         except (RuntimeError, subprocess.TimeoutExpired) as exc:
             raise ImagePullError("GHCR 和南大源均拉取失败，未停止服务或切换版本") from exc
 
-    def status(self, state: str, message: str, version: str = "") -> None:
-        atomic_write(self.directory / "status.json", json.dumps({"state": state, "message": message, "version": version}, ensure_ascii=False), 0o644)
-        print(f"{state}: {message}", flush=True)
+    def status(self, state: str, message: str, version: str = "", *, progress: int | None = None) -> None:
+        atomic_write(self.directory / "status.json", json.dumps({"state": state, "message": message, "version": version, "progress": progress}, ensure_ascii=False), 0o644)
+        print(f"{state}: {message}" + (f" {progress}%" if progress is not None else ""), flush=True)
 
     def inspect_services(self) -> dict[str, dict]:
         containers = {}

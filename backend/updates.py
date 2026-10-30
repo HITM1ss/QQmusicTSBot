@@ -27,7 +27,7 @@ def update_status() -> dict:
                 "message": status.get("message", "") if status.get("state") in {"installing", "install_failed"} else "宿主机更新服务尚未安装"}
     if (directory / "request.json").exists() and status.get("state") != "running":
         status = {"state": "pending", "message": "更新请求已提交"}
-    return {"available": True, "state": status.get("state", "unknown"), "message": status.get("message", ""), "version": status.get("version", "")}
+    return {"available": True, "state": status.get("state", "unknown"), "message": status.get("message", ""), "version": status.get("version", ""), "progress": status.get("progress")}
 
 
 def submit_update(version: str) -> None:

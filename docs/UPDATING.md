@@ -4,7 +4,7 @@
 
 ## Linux + systemd + Docker Compose
 
-一键更新支持本仓库在 `ghcr.io/hitm1ss/qqmusictsbot-*` 发布的三个预构建镜像，以及 `docker-compose.prebuilt.yml` 的标准目录结构。宿主机需要 Docker Compose v2、Python 3 和 systemd。源码构建、历史 `neteasetsbot` 镜像、定制数据目录不自动切换，请先迁移到当前预构建部署并验证数据挂载。
+一键更新支持本仓库在 `ghcr.io/hitm1ss/qqmusictsbot-*` 发布的三个预构建镜像，以及 `docker-compose.prebuilt.yml` 的标准目录结构。宿主机需要 Docker Compose 2.36 或更新版本、Python 3 和 systemd，拉取进度使用 Compose 的 `--progress json` 输出。源码构建、历史 `neteasetsbot` 镜像、定制数据目录不自动切换，请先迁移到当前预构建部署并验证数据挂载。
 
 首次启用需要在宿主机完成一次安装：
 
@@ -34,6 +34,8 @@
 5. 检查容器运行状态、后端版本及 HTTP 接口、前端提供的 `version.json`。通过后面板显示完成，刷新页面即可加载新前端。
 
 更新阶段可能暂时无法访问网页。面板会显示 GHCR 超时、切换南大源及最终使用的来源。面板仅在更新进行中每 3 秒刷新一次进度，最多等待 35 分钟；systemd 的总任务期限也是 35 分钟，为两轮拉取和后续重建检查留出时间。重新打开页面也能读取保存在磁盘上的结果。
+
+拉取期间显示“正在拉取更新镜像（vX.Y.Z）...23%”。百分比根据 [Docker Compose 的 JSON 进度输出](https://docs.docker.com/reference/cli/docker/compose/)估算：三个镜像等权汇总，每个镜像内按已知镜像层的下载字节计算；已缓存镜像直接计为完成，解压字节不混入下载量。100% 表示拉取命令成功结束，随后继续显示备份、重建和检查阶段。切换南大源时重新统计这一轮拉取进度，文案同时显示切换原因与来源。更新宿主机脚本并重新运行安装脚本后，这项进度采集才会生效。
 
 南大源地址使用其[GHCR 镜像说明](https://doc.nju.edu.cn/books/e1654/page/ghcr)中的域名替换规则。重试只针对镜像拉取阶段；服务已重建后的就绪检查失败，仍按下述失败与恢复流程处理。
 

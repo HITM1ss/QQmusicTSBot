@@ -40,6 +40,8 @@ On first startup, the backend creates a one-time admin password in logs/initial-
 
 Choose **Guest login** on the sign-in page to search, browse playlists, save local favorites, and add songs to the queue without an account. Guests can view playback and history. Settings, music authorization, software updates, immediate playback, queue editing, and global player controls require an administrator.
 
+The update panel shows an estimated image-pull percentage from Docker Compose progress events. Update and reinstall the host updater scripts to enable collection; see [updater setup](docs/UPDATING.md).
+
 For local development, run the services separately:
 
 ~~~bash
