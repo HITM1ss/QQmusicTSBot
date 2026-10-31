@@ -60,6 +60,11 @@ class UpdaterInstallationTests(unittest.TestCase):
                 module.activate_systemd_updater(self.worker, self.unit, self.root)
         self.assertFalse((self.worker.directory / "installed").exists())
 
+    def test_service_leaves_time_for_primary_mirror_and_recreation(self):
+        service, _ = module.systemd_unit_contents(self.root, "test", self.root / "worker.py", self.root / "config.json")
+        self.assertIn("TimeoutStartSec=60min", service)
+        self.assertLess(module.PULL_TIMEOUT_SECONDS + module.MIRROR_PULL_TIMEOUT_SECONDS, 60 * 60)
+
     @unittest.skipUnless(shutil.which("systemd-analyze"), "requires Linux systemd parser")
     def test_generated_units_pass_real_systemd_parser(self):
         # Path directives keep the entire RHS as a path, including spaces, without shell quotes.

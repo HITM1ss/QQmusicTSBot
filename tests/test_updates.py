@@ -143,6 +143,13 @@ class PullProgressTests(unittest.TestCase):
             self.assertEqual(min(99, index * 100 // 3), progress.update({"id": identifier, "text": "Pulled"}))
         self.assertEqual(99, progress.update({"id": identifier, "text": "Pulled"}))
 
+    def test_completed_image_layers_are_not_reported_as_active_downloads(self):
+        progress = worker.PullProgress()
+        progress.update({"parent_id": "backend", "id": "layer", "text": "Downloading", "current": 10, "total": 100})
+        self.assertEqual(("镜像完成 0/3；1 层下载中", True), progress.describe())
+        progress.update({"id": "backend", "text": "Pulled"})
+        self.assertEqual(("镜像完成 1/3；等待 Docker 报告进展", False), progress.describe())
+
 
 class HostUpdaterTests(unittest.TestCase):
     def setUp(self):
@@ -208,7 +215,8 @@ class HostUpdaterTests(unittest.TestCase):
             self.updater.run()
         pulls = [(args, env, timeout) for args, env, timeout in recorded if "pull" in args]
         self.assertEqual(2, len(pulls))
-        self.assertTrue(all(args[-4:] == ["pull", *worker.SERVICES] and timeout == 600 for args, _, timeout in pulls))
+        self.assertTrue(all(args[-4:] == ["pull", *worker.SERVICES] for args, _, _ in pulls))
+        self.assertEqual([600, 2400], [timeout for _, _, timeout in pulls])
         self.assertEqual("ghcr.nju.edu.cn", pulls[1][1]["TSBOT_IMAGE_REGISTRY"])
         self.assertEqual("v0.1.6", pulls[1][1]["TSBOT_IMAGE_TAG"])
         tags = [index for index, (args, _, _) in enumerate(recorded) if args[:3] == ["docker", "image", "tag"]]
@@ -225,12 +233,13 @@ class HostUpdaterTests(unittest.TestCase):
         pulls = []
         def command(args, env=None, timeout=600, on_line=None):
             if "pull" in args:
-                pulls.append(env)
+                pulls.append((env, timeout))
             return self.command(args, env, timeout, on_line)
         with patch.object(self.updater, "inspect_services", side_effect=[self.containers, new]), patch.object(self.updater, "command", side_effect=command):
             self.updater.run()
         self.assertEqual(1, len(pulls))
-        self.assertEqual("ghcr.nju.edu.cn", pulls[0]["TSBOT_IMAGE_REGISTRY"])
+        self.assertEqual("ghcr.nju.edu.cn", pulls[0][0]["TSBOT_IMAGE_REGISTRY"])
+        self.assertEqual(2400, pulls[0][1])
         tags = [args for args in self.calls if args[:3] == ["docker", "image", "tag"]]
         self.assertEqual([[f"{worker.MIRROR_IMAGE_PREFIX}-{name}:v0.1.6", f"{worker.IMAGE_PREFIX}-{name}:v0.1.6"] for name in worker.SERVICES], [args[-2:] for args in tags])
         self.assertLess(max(self.calls.index(args) for args in tags), next(i for i, args in enumerate(self.calls) if "stop" in args))
@@ -285,14 +294,33 @@ class HostUpdaterTests(unittest.TestCase):
         self.assertIn("TSBOT_IMAGE_TAG=v0.1.5", (self.project / ".env").read_text())
         self.assertFalse((self.project / "data/backups").exists())
 
-    def test_each_registry_has_one_shared_ten_minute_pull_budget(self):
-        with patch.object(self.updater, "command", side_effect=[RuntimeError("GHCR failed"), subprocess.TimeoutExpired("mirror", 600)]) as command:
-            with self.assertRaises(worker.ImagePullError):
+    def test_primary_and_mirror_have_separate_shared_pull_budgets(self):
+        with patch.object(self.updater, "command", side_effect=[subprocess.TimeoutExpired("ghcr", 600), subprocess.TimeoutExpired("mirror", 2400)]) as command:
+            with self.assertRaisesRegex(worker.ImagePullError, "GHCR 回退后，南大源拉取超时（40 分钟）"):
                 self.updater.pull_images("v0.1.6", {})
         self.assertEqual(2, command.call_count)
         for call in command.call_args_list:
             self.assertEqual(["pull", *worker.SERVICES], call.args[0][-4:])
-            self.assertEqual(600, call.kwargs["timeout"])
+        self.assertEqual([600, 2400], [call.kwargs["timeout"] for call in command.call_args_list])
+
+    def test_direct_mirror_timeout_reports_the_forty_minute_limit(self):
+        self.updater.image_source = "nju"
+        with patch.object(self.updater, "command", side_effect=subprocess.TimeoutExpired("mirror", 2400)) as command:
+            with self.assertRaisesRegex(worker.ImagePullError, "^南大源拉取超时（40 分钟），未停止服务或切换版本$"):
+                self.updater.pull_images("v0.1.11", {})
+        command.assert_called_once()
+        self.assertEqual(2400, command.call_args.kwargs["timeout"])
+
+    def test_retag_timeout_is_not_reported_as_a_forty_minute_pull_timeout(self):
+        self.updater.image_source = "nju"
+        def command(args, env=None, timeout=600, on_line=None):
+            if args[:3] == ["docker", "image", "tag"]:
+                raise subprocess.TimeoutExpired(args, timeout)
+            return ""
+        with patch.object(self.updater, "command", side_effect=command):
+            with self.assertRaises(subprocess.TimeoutExpired) as raised:
+                self.updater.pull_images("v0.1.11", {})
+        self.assertEqual(30, raised.exception.timeout)
 
     def test_primary_success_does_not_use_mirror(self):
         with patch.object(self.updater, "command") as command:
@@ -319,7 +347,9 @@ class HostUpdaterTests(unittest.TestCase):
             self.assertEqual(23, json.loads((self.updater.directory / "status.json").read_text())["progress"])
             for service in worker.SERVICES:
                 on_line(json.dumps({"id": service, "text": "Pulled"}))
-            self.assertEqual(99, json.loads((self.updater.directory / "status.json").read_text())["progress"])
+            waiting = json.loads((self.updater.directory / "status.json").read_text())
+            self.assertIsNone(waiting["progress"])
+            self.assertIn("镜像完成 3/3；等待 Docker 命令结束", waiting["message"])
             return ""
         with patch.object(self.updater, "command", side_effect=command):
             self.updater.pull_with_progress("v0.1.8", {})
@@ -336,7 +366,47 @@ class HostUpdaterTests(unittest.TestCase):
         with patch.object(self.updater, "command", side_effect=command):
             with self.assertRaises(RuntimeError):
                 self.updater.pull_with_progress("v0.1.8", {})
-        self.assertEqual(99, json.loads((self.updater.directory / "status.json").read_text())["progress"])
+        status = json.loads((self.updater.directory / "status.json").read_text())
+        self.assertIsNone(status["progress"])
+        self.assertIn("等待 Docker 命令结束", status["message"])
+
+    def test_extraction_and_verification_remain_visible_when_download_estimate_is_unchanged(self):
+        def command(args, env=None, timeout=600, on_line=None):
+            for service in ("backend", "web"):
+                on_line(json.dumps({"id": service, "text": "Pulled"}))
+            on_line(json.dumps({"parent_id": "voice-service", "id": "layer", "text": "Downloading", "current": 99, "total": 100}))
+            self.assertEqual(99, json.loads((self.updater.directory / "status.json").read_text())["progress"])
+            on_line(json.dumps({"parent_id": "voice-service", "id": "layer", "text": "Downloading", "current": 100, "total": 100}))
+            self.assertIsNone(json.loads((self.updater.directory / "status.json").read_text())["progress"])
+            for phase, label in (("Extracting", "解压中"), ("Verifying Checksum", "校验中"), ("Pull complete", "等待 Docker 报告进展")):
+                on_line(json.dumps({"parent_id": "voice-service", "id": "layer", "text": phase}))
+                status = json.loads((self.updater.directory / "status.json").read_text())
+                self.assertIsNone(status["progress"])
+                self.assertIn("镜像完成 2/3", status["message"])
+                self.assertIn(label, status["message"])
+            on_line(json.dumps({"id": "voice-service", "text": "Pulled"}))
+            self.assertIn("等待 Docker 命令结束", json.loads((self.updater.directory / "status.json").read_text())["message"])
+            return ""
+        with patch.object(self.updater, "command", side_effect=command):
+            self.updater.pull_with_progress("v0.1.11", {})
+        self.assertEqual(100, json.loads((self.updater.directory / "status.json").read_text())["progress"])
+
+    def test_downloading_and_extracting_layers_can_be_reported_together(self):
+        def command(args, env=None, timeout=600, on_line=None):
+            on_line(json.dumps({"parent_id": "backend", "id": "first", "text": "Extracting"}))
+            on_line(json.dumps({"parent_id": "web", "id": "second", "text": "Downloading", "current": 30, "total": 100}))
+            status = json.loads((self.updater.directory / "status.json").read_text())
+            self.assertEqual(10, status["progress"])
+            self.assertIn("1 层下载中；1 层解压中", status["message"])
+            # Compose may omit a separate Download complete event after the final byte update.
+            on_line(json.dumps({"parent_id": "web", "id": "second", "text": "Downloading", "current": 100, "total": 100}))
+            status = json.loads((self.updater.directory / "status.json").read_text())
+            self.assertIsNone(status["progress"])
+            self.assertIn("1 层解压中", status["message"])
+            self.assertNotIn("层下载中", status["message"])
+            return ""
+        with patch.object(self.updater, "command", side_effect=command):
+            self.updater.pull_with_progress("v0.1.11", {})
 
     def test_switching_registry_starts_a_new_progress_count(self):
         starts = []

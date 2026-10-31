@@ -24,6 +24,7 @@ SERVICES = ("voice-service", "backend", "web")
 IMAGE_PREFIX = "ghcr.io/hitm1ss/qqmusictsbot"
 MIRROR_IMAGE_PREFIX = "ghcr.nju.edu.cn/hitm1ss/qqmusictsbot"
 PULL_TIMEOUT_SECONDS = 600
+MIRROR_PULL_TIMEOUT_SECONDS = 2400
 NTP_SERVER = "ntp.aliyun.com"
 NTP_UNIX_OFFSET = 2_208_988_800
 
@@ -66,13 +67,19 @@ class ImagePullError(RuntimeError):
 class PullProgress:
     def __init__(self):
         self.layers: dict[str, dict[str, tuple[int, int]]] = {}
+        self.phases: dict[tuple[str, str], str] = {}
         self.completed: set[str] = set()
 
     def update(self, event: dict) -> int:
         parent = event.get("parent_id")
         phase = event.get("text")
+        if parent and phase:
+            self.phases[parent, event["id"]] = phase
         if parent and phase == "Downloading" and event.get("total", 0) > 0:
-            self.layers.setdefault(parent, {})[event["id"]] = (event.get("current", 0), event["total"])
+            current, total = event.get("current", 0), event["total"]
+            self.layers.setdefault(parent, {})[event["id"]] = (current, total)
+            if current >= total:
+                self.phases[parent, event["id"]] = "Download complete"
         elif parent and phase in {"Download complete", "Verifying Checksum", "Extracting", "Pull complete"}:
             layers = self.layers.get(parent, {})
             if event["id"] in layers:
@@ -87,6 +94,18 @@ class PullProgress:
         # Each image contributes one third. Only a successful pull command reaches 100%.
         return min(99, int(downloaded * 100 / len(SERVICES)))
 
+    def describe(self) -> tuple[str, bool]:
+        active = [phase for (image, _), phase in self.phases.items() if image not in self.completed]
+        details = [f"镜像完成 {len(self.completed)}/{len(SERVICES)}"]
+        for phase, label in (("Downloading", "下载中"), ("Extracting", "解压中"),
+                             ("Verifying Checksum", "校验中"), ("Pulling fs layer", "准备下载"), ("Waiting", "等待中")):
+            count = active.count(phase)
+            if count:
+                details.append(f"{count} 层{label}")
+        if len(details) == 1:
+            details.append("等待 Docker 命令结束" if len(self.completed) == len(SERVICES) else "等待 Docker 报告进展")
+        return "；".join(details), "Downloading" in active
+
 
 def systemd_unit_contents(project: Path, name: str, worker_path: Path, config_path: Path) -> tuple[str, str]:
     unit = f"tsbot-updater-{name}"
@@ -99,7 +118,7 @@ Requires=docker.service
 Type=oneshot
 ExecStart=/usr/bin/python3 {worker_path} {config_path}
 ExecStopPost=/usr/bin/python3 {worker_path} {config_path} --finalize
-TimeoutStartSec=35min
+TimeoutStartSec=60min
 UMask=0077
 '''
     path = f'''[Unit]
@@ -201,9 +220,9 @@ class Updater:
             raise RuntimeError(f"Command failed: {args[0]} (exit {process.returncode})")
         return output
 
-    def pull_with_progress(self, version: str, environment: dict, message: str = "正在拉取更新镜像") -> None:
+    def pull_with_progress(self, version: str, environment: dict, message: str = "正在拉取更新镜像", *, timeout: float = PULL_TIMEOUT_SECONDS) -> None:
         progress = PullProgress()
-        previous = 0
+        previous: tuple[int | None, str] = (0, message)
         self.status("running", message, version, progress=0)
 
         def on_line(line: str) -> None:
@@ -212,12 +231,14 @@ class Updater:
             if not line.startswith("{"):
                 return
             percent = progress.update(json.loads(line))
-            if percent != previous:
-                self.status("running", message, version, progress=percent)
-                previous = percent
+            detail, downloading = progress.describe()
+            current = (percent if downloading else None, f"{message}：{detail}")
+            if current != previous:
+                self.status("running", current[1], version, progress=current[0])
+                previous = current
 
         self.command([*self.compose, "--progress", "json", "pull", *SERVICES], environment,
-                     timeout=PULL_TIMEOUT_SECONDS, on_line=on_line)
+                     timeout=timeout, on_line=on_line)
         self.status("running", message, version, progress=100)
 
     def pull_images(self, version: str, environment: dict) -> str:
@@ -232,15 +253,17 @@ class Updater:
                 registry = "ghcr.nju.edu.cn"
                 message = f"GHCR 拉取{reason}，正在从南大源拉取更新镜像"
         try:
-            self.pull_with_progress(version, {**environment, "TSBOT_IMAGE_REGISTRY": registry}, message)
-            # Keep Compose and the saved registry settings unchanged. Retag only after
-            # every mirror image is present; container recreation uses --pull never.
-            for service in SERVICES:
-                self.command(["docker", "image", "tag", f"{MIRROR_IMAGE_PREFIX}-{service}:{version}", f"{IMAGE_PREFIX}-{service}:{version}"], timeout=30)
-            return "南大源"
+            self.pull_with_progress(version, {**environment, "TSBOT_IMAGE_REGISTRY": registry}, message,
+                                    timeout=MIRROR_PULL_TIMEOUT_SECONDS)
         except (RuntimeError, subprocess.TimeoutExpired) as exc:
-            source = "南大源" if self.image_source == "nju" else "GHCR 和南大源均"
-            raise ImagePullError(f"{source}拉取失败，未停止服务或切换版本") from exc
+            reason = "南大源拉取超时（40 分钟）" if isinstance(exc, subprocess.TimeoutExpired) else "南大源拉取失败"
+            prefix = "" if self.image_source == "nju" else "GHCR 回退后，"
+            raise ImagePullError(f"{prefix}{reason}，未停止服务或切换版本") from exc
+        # Keep Compose and the saved registry settings unchanged. Retag only after
+        # every mirror image is present; container recreation uses --pull never.
+        for service in SERVICES:
+            self.command(["docker", "image", "tag", f"{MIRROR_IMAGE_PREFIX}-{service}:{version}", f"{IMAGE_PREFIX}-{service}:{version}"], timeout=30)
+        return "南大源"
 
     def status(self, state: str, message: str, version: str = "", *, progress: int | None = None) -> None:
         atomic_write(self.directory / "status.json", json.dumps({"state": state, "message": message, "version": version, "progress": progress, "image_source": self.image_source}, ensure_ascii=False), 0o644)

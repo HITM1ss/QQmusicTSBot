@@ -46,7 +46,7 @@ async function refresh() {
 
 function scheduleRefresh() {
   window.clearTimeout(timer)
-  if (!refreshDeadline) refreshDeadline = Date.now() + 35 * 60 * 1000
+  if (!refreshDeadline) refreshDeadline = Date.now() + 60 * 60 * 1000
   if (Date.now() > refreshDeadline) {
     error.value = '等待更新超时，请查看宿主机更新服务日志，并手动刷新状态'
     return
@@ -125,7 +125,7 @@ onUnmounted(() => { alive = false; window.clearTimeout(timer) })
           <input v-model="imageSource" type="radio" name="update-image-source" value="nju" class="h-4 w-4 accent-blue-600" />
           <span>南大源</span>
         </label>
-        <p class="text-xs text-gray-500">{{ imageSource === 'ghcr' ? '拉取失败或超过 10 分钟后自动改用南大源。' : '本次更新直接从南大源拉取镜像。' }}</p>
+        <p class="text-xs text-gray-500">{{ imageSource === 'ghcr' ? '拉取失败或超过 10 分钟后自动改用南大源，南大源最多等待 40 分钟。' : '本次更新直接从南大源拉取镜像，最多等待 40 分钟。' }}</p>
       </fieldset>
       <div class="flex flex-wrap gap-3">
         <button class="btn-secondary" :disabled="checking || updating" @click="checkUpdate">{{ checking ? '正在检查…' : '检查更新' }}</button>

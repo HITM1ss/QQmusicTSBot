@@ -6,9 +6,11 @@ Music navigation uses one sliding selection rectangle. Each click immediately ch
 
 System settings include frontend/backend build versions, stable-release checks, and one-click updates for configured Linux/systemd Compose hosts. See [host updater setup](../docs/UPDATING.md). Vite injects `VITE_TSBOT_VERSION` and `VITE_TSBOT_REVISION` during builds and emits `version.json`; local development is labeled as a development build.
 
-During image pulls, the panel places the version before the host-reported percentage, for example `正在拉取更新镜像（v0.1.8）...23%`. The existing three-second status refresh carries progress for both GHCR and NJU; later update stages display their status text.
+During image downloads, the panel places the version before the host-reported percentage. The status also reports completed images and active download, extraction, and verification layers. When no layer is downloading, the host omits the download percentage and reports the current phase, including waiting for Docker to exit after all images report completion. The existing three-second status refresh carries progress for both GHCR and NJU; cached or fast downloads may finish between refreshes. Later update stages display their status text.
 
 Two vertically stacked radio buttons above the update actions select GHCR (default, with NJU fallback) or a direct NJU pull for this update. The selection is sent as `image_source: "ghcr" | "nju"`; it is locked while updating and restored from pending/running status after a reload.
+
+GHCR has a ten-minute pull limit; both direct and fallback NJU pulls have forty minutes. The page polls active updates for up to sixty minutes, matching the host systemd service's overall deadline and leaving time for backup and recreation.
 
 Music authorization automatically probes a Jay Chou track after QR login and offers a manual verification button. Settings display the last result and timestamp; a preview URL is not accepted as a successful probe.
 

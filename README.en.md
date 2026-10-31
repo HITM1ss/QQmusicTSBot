@@ -40,7 +40,7 @@ On first startup, the backend creates a one-time admin password in logs/initial-
 
 Choose **Guest login** on the sign-in page to search, browse playlists, save local favorites, and add songs to the queue without an account. Guests can view playback and history. Settings, music authorization, software updates, immediate playback, queue editing, and global player controls require an administrator.
 
-The update panel lets administrators choose GHCR or the NJU mirror for each update and shows an estimated image-pull percentage from Docker Compose progress events. GHCR remains the default with automatic NJU fallback; selecting NJU pulls directly from the mirror. Update and reinstall the host updater scripts to enable these features; see [updater setup](docs/UPDATING.md).
+The update panel lets administrators choose GHCR or the NJU mirror for each update. It shows estimated download percentages while layers are downloading, then reports extraction, verification, and waiting stages with completed-image counts. GHCR remains the default with NJU fallback after failure or ten minutes; NJU has a forty-minute pull limit for both direct and fallback use. Update and reinstall the host updater scripts to enable these features; see [updater setup](docs/UPDATING.md).
 
 For local development, run the services separately:
 
