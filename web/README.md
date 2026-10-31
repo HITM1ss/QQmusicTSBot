@@ -2,6 +2,8 @@
 
 A modern Vue.js frontend for the TSBot music player with comprehensive music management features.
 
+Music navigation uses one sliding selection rectangle. Each click immediately changes its destination, including during an unfinished transition; browser history and playlist detail routes keep the selection in sync. Reduced-motion preferences disable the sliding transition.
+
 System settings include frontend/backend build versions, stable-release checks, and one-click updates for configured Linux/systemd Compose hosts. See [host updater setup](../docs/UPDATING.md). Vite injects `VITE_TSBOT_VERSION` and `VITE_TSBOT_REVISION` during builds and emits `version.json`; local development is labeled as a development build.
 
 During image pulls, the panel places the version before the host-reported percentage, for example `正在拉取更新镜像（v0.1.8）...23%`. The existing three-second status refresh carries progress for both GHCR and NJU; later update stages display their status text.
@@ -13,6 +15,8 @@ Music authorization automatically probes a Jay Chou track after QR login and off
 The login page offers administrator and guest access. Guests can search, browse playlists, keep local favorites, view playback/history, and enqueue songs without interrupting playback. Settings, QQ Music authorization, updates, queue editing, and global playback controls are restricted by both the UI and backend. Guest sessions use HttpOnly cookies, last seven days, and support logout or switching to administrator login. Browser writes include the session CSRF token; API tokens belong only in trusted external clients.
 
 The log page displays new bot entries and TeamSpeak 3's UTC server logs in Beijing time (UTC+8), including subsecond precision from server logs. Older bot entries keep their original timestamps. Linux installation performs a one-time network clock synchronization on the host.
+
+The **Clear logs** button sits before the line-count selector and sends `DELETE /admin/logs/bot` with the administrator session's CSRF token. It clears backend and Voice history, refreshes the view, and keeps new log writes working. The button is disabled for the read-only TeamSpeak source.
 
 ## Features
 

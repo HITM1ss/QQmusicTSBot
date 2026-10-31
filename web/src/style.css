@@ -167,6 +167,20 @@
   .nav-item-active {
     @apply bg-blue-50 text-blue-600 shadow-sm border border-blue-100/50;
   }
+
+  .sidebar-nav-selection {
+    @apply absolute top-0 inset-x-0 pointer-events-none rounded-xl bg-blue-50 border border-blue-100/50 shadow-sm;
+    transition: transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .sidebar-nav-link {
+    @apply relative flex items-center gap-3 px-4 py-3 rounded-xl text-gray-600 hover:text-gray-900 font-medium select-none;
+    transition: color 180ms ease;
+  }
+
+  .sidebar-nav-link-selected {
+    @apply text-blue-600;
+  }
   
   /* 工具提示 */
   .tooltip {
@@ -670,6 +684,20 @@
     color: rgb(250 250 249);
   }
 
+  body.theme-dark .sidebar-nav-selection {
+    background-color: rgb(39 39 42 / 0.95);
+    border-color: rgba(113, 113, 122, 0.65);
+  }
+
+  body.theme-dark .sidebar-nav-link {
+    color: rgb(168 162 158);
+  }
+
+  body.theme-dark .sidebar-nav-link:hover,
+  body.theme-dark .sidebar-nav-link-selected {
+    color: rgb(250 250 249);
+  }
+
   body.theme-dark .status-info {
     background-color: rgb(39 39 42 / 0.82);
     border-color: rgba(113, 113, 122, 0.3);
@@ -744,6 +772,10 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .sidebar-nav-selection {
+      transition: none;
+    }
+
     .route-shell-stage,
     .theme-toolbar-btn,
     .theme-player-shell,
@@ -753,6 +785,7 @@
     .btn-ghost,
     .btn-icon,
     .nav-item,
+    .sidebar-nav-link,
     .card,
     .card-compact {
       transition: none !important;

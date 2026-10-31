@@ -2925,6 +2925,29 @@ async def admin_logs(
     }
 
 
+@app.delete("/admin/logs/{source}")
+def admin_clear_logs(source: str, request: Request, session: Session = Depends(get_session)) -> dict:
+    _, admin_session = require_admin(request, session)
+    require_csrf(request, admin_session)
+    normalized_source = (source or "").strip().lower()
+    if normalized_source == "teamspeak":
+        raise HTTPException(status_code=400, detail="TS 服务器日志仅支持查看，请在 TS 宿主机清除历史日志")
+    if normalized_source != "bot":
+        raise HTTPException(status_code=404, detail="未知日志来源")
+    try:
+        for path in (_runtime_path(settings.log_file, "./logs/backend.log"), _voice_log_file_path()):
+            try:
+                with path.open("r+b") as file:
+                    # Preserve the inode so existing append-mode log writers keep working.
+                    file.truncate(0)
+            except FileNotFoundError:
+                continue
+    except OSError as exc:
+        logger.warning("清除机器人日志失败，异常类型 %s", type(exc).__name__)
+        raise HTTPException(status_code=500, detail="清除日志失败，请检查日志文件的写入权限") from None
+    return {"ok": True}
+
+
 @app.delete("/admin/cache")
 def admin_clear_cache(request: Request, session: Session = Depends(get_session)) -> dict:
     _, admin_session = require_admin(request, session)

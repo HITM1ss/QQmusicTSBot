@@ -38,6 +38,77 @@ class AdminCacheTests(unittest.TestCase):
 
 
 class AdminLogTests(unittest.IsolatedAsyncioTestCase):
+    def test_clear_bot_logs_preserves_open_append_writers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            backend_log = root / "backend.log"
+            voice_log = root / "voice.log"
+            untouched = root / "other.txt"
+            backend_log.write_text("old backend history\n")
+            voice_log.write_text("old voice history\n")
+            untouched.write_text("preserve this file")
+            inodes = (backend_log.stat().st_ino, voice_log.stat().st_ino)
+            with (
+                backend_log.open("ab") as backend_writer,
+                voice_log.open("ab") as voice_writer,
+                patch.object(main, "require_admin", return_value=(object(), object())),
+                patch.object(main, "require_csrf"),
+                patch.object(main.settings, "log_file", str(backend_log)),
+                patch.object(main, "_voice_log_file_path", return_value=voice_log),
+            ):
+                self.assertTrue(main.admin_clear_logs("bot", object(), object())["ok"])
+                self.assertEqual(b"", backend_log.read_bytes())
+                self.assertEqual(b"", voice_log.read_bytes())
+                self.assertEqual(0, main._bot_log_payload(200)["line_count"])
+                backend_writer.write(b"new backend log\n")
+                backend_writer.flush()
+                voice_writer.write(b"new voice log\n")
+                voice_writer.flush()
+            self.assertEqual(b"new backend log\n", backend_log.read_bytes())
+            self.assertEqual(b"new voice log\n", voice_log.read_bytes())
+            self.assertEqual(inodes, (backend_log.stat().st_ino, voice_log.stat().st_ino))
+            self.assertEqual("preserve this file", untouched.read_text())
+
+    def test_clear_missing_logs_succeeds_without_creating_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            backend_log = Path(directory) / "backend.log"
+            voice_log = Path(directory) / "voice.log"
+            with (
+                patch.object(main, "require_admin", return_value=(object(), object())),
+                patch.object(main, "require_csrf"),
+                patch.object(main.settings, "log_file", str(backend_log)),
+                patch.object(main, "_voice_log_file_path", return_value=voice_log),
+            ):
+                self.assertTrue(main.admin_clear_logs("bot", object(), object())["ok"])
+            self.assertFalse(backend_log.exists())
+            self.assertFalse(voice_log.exists())
+
+    def test_clear_remote_or_unknown_logs_does_not_touch_files_or_query_server(self) -> None:
+        with (
+            patch.object(main, "require_admin", return_value=(object(), object())),
+            patch.object(main, "require_csrf"),
+            patch.object(main, "_voice_log_file_path") as voice_path,
+            patch.object(main, "query_server_logs", AsyncMock()) as query_logs,
+        ):
+            for source, status in (("teamspeak", 400), ("unknown", 404)):
+                with self.assertRaises(HTTPException) as raised:
+                    main.admin_clear_logs(source, object(), object())
+                self.assertEqual(status, raised.exception.status_code)
+        voice_path.assert_not_called()
+        query_logs.assert_not_awaited()
+
+    def test_clear_log_write_failure_is_reported_without_exposing_paths(self) -> None:
+        with (
+            patch.object(main, "require_admin", return_value=(object(), object())),
+            patch.object(main, "require_csrf"),
+            patch.object(Path, "open", side_effect=PermissionError("private-log-path")),
+            patch.object(main.logger, "warning"),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                main.admin_clear_logs("bot", object(), object())
+        self.assertEqual(500, raised.exception.status_code)
+        self.assertNotIn("private-log-path", raised.exception.detail)
+
     def test_bot_log_payload_combines_components_and_redacts_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

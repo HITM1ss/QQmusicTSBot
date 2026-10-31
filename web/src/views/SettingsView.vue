@@ -91,6 +91,7 @@ const activeLogSource = ref<LogSource>('bot')
 const logPayload = ref<LogPayload | null>(null)
 const logLines = ref(200)
 const logsLoading = ref(false)
+const logsClearing = ref(false)
 const logsError = ref('')
 const toastMessage = ref('')
 const toastType = ref<'success' | 'error' | 'info'>('info')
@@ -154,6 +155,24 @@ async function loadLogs(source = activeLogSource.value) {
 function selectLogSource(source: LogSource) {
   activeLogSource.value = source
   void loadLogs(source)
+}
+
+async function clearLogs() {
+  const source = activeLogSource.value
+  logsClearing.value = true
+  logsError.value = ''
+  ++logLoadGeneration
+  try {
+    await apiDelete(`/admin/logs/${source}`)
+    logPayload.value = null
+    await loadLogs(source)
+    showToast('历史机器人日志已清除', 'success')
+  } catch (e: any) {
+    logsError.value = String(e?.message || e)
+    showToast(logsError.value, 'error', 8000)
+  } finally {
+    logsClearing.value = false
+  }
 }
 
 function showToast(message: string, type: 'success' | 'error' | 'info', duration = 4500) {
@@ -369,6 +388,7 @@ onBeforeUnmount(() => {
                   <button
                     type="button"
                     :class="['inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors', activeLogSource === 'bot' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100']"
+                    :disabled="logsClearing"
                     @click="selectLogSource('bot')"
                   >
                     <Bot :size="16" />
@@ -377,28 +397,39 @@ onBeforeUnmount(() => {
                   <button
                     type="button"
                     :class="['inline-flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors', activeLogSource === 'teamspeak' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-100']"
+                    :disabled="logsClearing"
                     @click="selectLogSource('teamspeak')"
                   >
                     <FileText :size="16" />
                     TS 服务器日志
                   </button>
                   <div class="ml-auto flex flex-wrap items-center gap-2">
-                    <label class="text-xs text-gray-500 flex items-center gap-2">
+                    <button
+                      type="button"
+                      class="btn-secondary py-1.5 px-3 text-sm"
+                      :disabled="logsLoading || logsClearing || activeLogSource !== 'bot'"
+                      :title="activeLogSource === 'bot' ? '清除后端和 Voice 的历史日志，继续记录新日志' : 'TS 服务器日志仅支持查看，请在 TS 宿主机清除'"
+                      @click="clearLogs"
+                    >
+                      <Trash2 :size="16" />
+                      {{ logsClearing ? '正在清除...' : '清除日志' }}
+                    </button>
+                    <label class="text-xs text-gray-500 flex items-center gap-2 whitespace-nowrap">
                       显示
-                      <select v-model.number="logLines" class="input-field py-1.5 text-sm" :disabled="logsLoading" @change="loadLogs()">
+                      <select v-model.number="logLines" class="input-field py-1.5 text-sm" :disabled="logsLoading || logsClearing" @change="loadLogs()">
                         <option :value="100">100 行</option>
                         <option :value="200">200 行</option>
                         <option :value="500">500 行</option>
                       </select>
                     </label>
-                    <button type="button" class="btn-secondary py-1.5 px-3 text-sm" :disabled="logsLoading" @click="loadLogs()">
+                    <button type="button" class="btn-secondary py-1.5 px-3 text-sm" :disabled="logsLoading || logsClearing" @click="loadLogs()">
                       <RefreshCw :size="16" :class="logsLoading ? 'animate-spin' : ''" />
                       刷新
                     </button>
                   </div>
                 </div>
                 <p class="text-xs text-gray-500">
-                  仅管理员可查看。TS 服务器日志需要在“ServerQuery 兼容”中完成配置，且账号拥有读取服务器日志的权限。
+                  仅管理员可查看和清除机器人日志。TS 服务器日志仅支持查看，需要在“ServerQuery 兼容”中配置有读取权限的账号。
                 </p>
               </div>
 

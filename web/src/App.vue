@@ -3,15 +3,11 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { authState, isAdmin, logout } from './auth'
 import MusicPlayer from './components/MusicPlayer.vue'
+import SidebarNavigation from './components/SidebarNavigation.vue'
 import { appConfig } from './appConfig'
 import { applyTheme, getInitialTheme } from './theme'
 import { 
-  Home, 
   Music,
-  Search, 
-  Heart, 
-  ListMusic, 
-  Clock, 
   Settings,
   Github,
   Moon,
@@ -102,60 +98,7 @@ function toggleTheme() {
           </div>
           
           <!-- Navigation -->
-          <nav class="flex-1 px-4 py-6 overflow-y-auto scrollbar-thin">
-            <div class="space-y-1.5">
-              <div class="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-1">发现</div>
-              
-              <RouterLink 
-                to="/search" 
-                class="nav-item"
-                active-class="nav-item-active"
-              >
-                <Search :size="20" />
-                <span>搜索</span>
-              </RouterLink>
-              
-              <RouterLink 
-                to="/playlists" 
-                class="nav-item"
-                active-class="nav-item-active"
-              >
-                <ListMusic :size="20" />
-                <span>歌单广场</span>
-              </RouterLink>
-            </div>
-            
-            <div class="space-y-1.5 mt-8">
-              <div class="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">我的音乐</div>
-              
-              <RouterLink 
-                to="/queue" 
-                class="nav-item"
-                active-class="nav-item-active"
-              >
-                <ListMusic :size="20" />
-                <span>播放队列</span>
-              </RouterLink>
-              
-              <RouterLink 
-                to="/favorites" 
-                class="nav-item"
-                active-class="nav-item-active"
-              >
-                <Heart :size="20" />
-                <span>本地收藏</span>
-              </RouterLink>
-              
-              <RouterLink 
-                to="/history" 
-                class="nav-item"
-                active-class="nav-item-active"
-              >
-                <Clock :size="20" />
-                <span>最近播放</span>
-              </RouterLink>
-            </div>
-          </nav>
+          <SidebarNavigation />
           
           <!-- User/Settings Footer -->
           <div class="theme-sidebar-footer p-4 border-t border-gray-100 bg-gray-50/50">
@@ -199,11 +142,11 @@ function toggleTheme() {
           
           <div class="flex items-center gap-2">
             <a
-              href="https://github.com/yichen11818"
+              href="https://github.com/HITM1ss/QQmusicTSBot"
               target="_blank"
               rel="noreferrer"
               class="theme-toolbar-btn p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
-              title="GitHub 主页"
+              title="GitHub 仓库"
             >
               <Github :size="20" />
             </a>

@@ -114,6 +114,8 @@ backend/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 
 New backend, Voice, and helper-script log entries use Beijing time (UTC+8). The log page converts TeamSpeak 3's default UTC timestamps to Beijing time; existing bot log files retain their original timestamps.
 
+Administrators can clear backend and Voice log history with the button before the line-count selector. Logging continues through the existing open files. TeamSpeak server logs are currently read-only and must be cleared on their host.
+
 After successful Linux setup or host-updater installation, one SNTP request to `ntp.aliyun.com` calibrates the host's system clock. The installer reports synchronization success or failure. Existing Linux deployments can run `sudo python3 scripts/compose-updater.py --sync-time`; allow outbound UDP 123. Containers need no additional clock-setting privileges.
 
 On startup, the backend removes queued entries from retired sources so they cannot block playback after an upgrade. Old history entries from retired sources cannot be replayed and may be removed when no longer needed.

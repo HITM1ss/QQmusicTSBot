@@ -130,6 +130,8 @@ backend/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 
 新增的后端、Voice 和辅助脚本日志统一按北京时间（UTC+8）输出，日志页读取的 TeamSpeak 3 默认 UTC 日志也会转换为北京时间。升级前写入的机器人日志保留原始时间。
 
+管理员可在日志页的显示行数左侧点击“清除日志”，清空后端和 Voice 的历史日志；后续日志继续正常写入。TS 服务器日志当前仅支持读取，需在 TS 宿主机清理。
+
 Linux 的 `setup.sh` 和宿主机更新器安装完成后，会从阿里云公网 NTP 服务 `ntp.aliyun.com` 获取一次时间并校准宿主机系统时钟；安装输出会说明校时是否成功。已有 Linux 部署可运行 `sudo python3 scripts/compose-updater.py --sync-time` 单独校时，需要允许到该服务器的 UDP 123 连接。时钟由宿主机维护，容器不需要新增权限。
 
 升级到当前版本时，已退役来源遗留在播放队列中的项目会在后端启动时自动移除，避免阻塞后续播放。旧历史记录不会再被重新点播；建议在确认升级成功后按需清理。

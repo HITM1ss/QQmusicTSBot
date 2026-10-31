@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -123,6 +125,7 @@ class GuestAccessTests(unittest.IsolatedAsyncioTestCase):
         operations = [
             ("GET", "/admin/settings", None),
             ("GET", "/admin/logs/bot", None),
+            ("DELETE", "/admin/logs/bot", None),
             ("GET", "/admin/version", None),
             ("GET", "/admin/update/check", None),
             ("POST", "/admin/update", {"version": "v9.9.9"}),
@@ -152,6 +155,28 @@ class GuestAccessTests(unittest.IsolatedAsyncioTestCase):
                 response = await self.client.request(method, path, json=body)
                 self.assertEqual(403, response.status_code, (method, path, response.text))
         set_cookie.assert_not_called()
+
+    async def test_log_clear_requires_admin_and_csrf_before_modifying_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            backend_log = Path(directory) / "backend.log"
+            voice_log = Path(directory) / "voice.log"
+            backend_log.write_text("backend history\n")
+            voice_log.write_text("voice history\n")
+            with patch.object(main.settings, "log_file", str(backend_log)), patch.object(main, "_voice_log_file_path", return_value=voice_log):
+                self.assertEqual(401, (await self.client.delete("/admin/logs/bot")).status_code)
+                await self.enter_guest()
+                self.assertEqual(403, (await self.client.delete("/admin/logs/bot")).status_code)
+                self.client.cookies.clear()
+                await self.enter_admin()
+                csrf = self.client.headers.pop("X-CSRF-Token")
+                self.assertEqual(403, (await self.client.delete("/admin/logs/bot")).status_code)
+                self.assertEqual("backend history\n", backend_log.read_text())
+                self.assertEqual("voice history\n", voice_log.read_text())
+                self.client.headers["X-CSRF-Token"] = csrf
+                response = await self.client.delete("/admin/logs/bot")
+                self.assertEqual(200, response.status_code, response.text)
+                self.assertEqual("", backend_log.read_text())
+                self.assertEqual("", voice_log.read_text())
 
     async def test_guest_cannot_interrupt_playback_via_enqueue_or_history(self) -> None:
         await self.enter_guest()
